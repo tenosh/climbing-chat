@@ -41,7 +41,10 @@ def get_thecrag_urls() -> List[str]:
     """Get URLs to crawl."""
     return [
         "https://www.thecrag.com/en/climbing/mexico/area/424260063",
-        "https://www.thecrag.com/en/climbing/mexico/area/289682910"
+        # "https://www.thecrag.com/en/climbing/mexico/area/289682910",
+        # "https://www.thecrag.com/en/climbing/mexico/area/2263518714",
+        # "https://www.thecrag.com/en/climbing/mexico/area/2172540612",
+        # "https://www.thecrag.com/en/climbing/mexico/area/2246283312",
     ]
 
 async def crawl_parallel(urls: List[str], max_concurrent: int = 5):
@@ -152,6 +155,7 @@ async def crawl_parallel(urls: List[str], max_concurrent: int = 5):
                 )
                 if result.success:
                     print(f"Successfully crawled: {url}")
+                    save_to_json(url, result.extracted_content)
                     await save_to_supabase(url, result.extracted_content)
                 else:
                     print(f"Failed: {url} - Error: {result.error_message}")
@@ -181,6 +185,10 @@ def save_to_json(url: str, data: Any):
             return [clean_data(item) for item in obj if item not in ({}, [], None, "")]
         return obj
 
+    # Create the directory if it doesn't exist
+    save_dir = "./climbs/san_luis_potosi/guadalcazar"
+    os.makedirs(save_dir, exist_ok=True)
+
     # Parse the JSON string if it's a string
     if isinstance(data, str):
         data = json.loads(data)
@@ -188,17 +196,34 @@ def save_to_json(url: str, data: Any):
     # Clean the data by removing empty objects
     cleaned_data = clean_data(data)
 
-    # Create a safe filename from the URL
-    filename = urlparse(url).path.strip('/').replace('/', '_') + '.json'
-    # Ensure the filename is valid
-    filename = ''.join(c for c in filename if c.isalnum() or c in ('_', '-', '.'))
+    # Extract area name from the data and create a safe version
+    area_name = ""
+    if isinstance(cleaned_data, list) and cleaned_data:
+        area_name = cleaned_data[0].get('area_name', '')
+    elif isinstance(cleaned_data, dict):
+        area_name = cleaned_data.get('area_name', '')
 
-    with open(filename, 'w', encoding='utf-8') as f:
+    safe_area_name = ''.join(c for c in area_name.lower() if c.isalnum() or c in ('_', '-', ' '))
+    safe_area_name = safe_area_name.replace(' ', '_')
+
+    # Get current date in YYYY-MM-DD format
+    current_date = datetime.now().strftime('%Y-%m-%d')
+
+    # Create filename with area name and date
+    filename = f"{safe_area_name}_{current_date}.json"
+    if not safe_area_name:  # Fallback to URL-based name if no area name found
+        filename = urlparse(url).path.strip('/').replace('/', '_') + '.json'
+        filename = ''.join(c for c in filename if c.isalnum() or c in ('_', '-', '.'))
+
+    # Join the directory path with the filename
+    filepath = os.path.join(save_dir, filename)
+
+    with open(filepath, 'w', encoding='utf-8') as f:
         json.dump(cleaned_data, f, indent=2, ensure_ascii=False)
-    print(f"Saved content to: {filename}")
+    print(f"Saved content to: {filepath}")
 
 async def save_to_supabase(url: str, data: Any):
-    """Save crawled content to Supabase database after cleaning empty objects."""
+    """Save crawled content to Supabase database, only inserting new routes."""
     def clean_data(obj):
         if isinstance(obj, dict):
             return {k: clean_data(v) for k, v in obj.items() if v not in ({}, [], None, "")}
@@ -214,14 +239,11 @@ async def save_to_supabase(url: str, data: Any):
     cleaned_data = clean_data(data)
 
     try:
-        # Handle the case where cleaned_data is a list
         if isinstance(cleaned_data, list):
             for area_data in cleaned_data:
                 area_name = area_data.get('area_name', '')
 
-                # Check if area already exists
-                existing_area = supabase.table('Area').select('*').eq('name', area_name).execute()
-
+                # Prepare area record
                 area_record = {
                     'name': area_name,
                     'description': area_data.get('area_description', ''),
@@ -229,54 +251,51 @@ async def save_to_supabase(url: str, data: Any):
                     'ethic': area_data.get('area_ethic', '')
                 }
 
-                if not existing_area.data:
-                    # Create new area if it doesn't exist
+                # Get all existing areas in one query
+                existing_areas = supabase.table('Area').select('*').execute()
+                area_map = {area['name']: area for area in existing_areas.data}
+
+                # Check if area exists
+                if area_name not in area_map:
+                    # Create new area
                     area_record['id'] = str(uuid.uuid4())
                     area_response = supabase.table('Area').insert(area_record).execute()
                     area_id = area_response.data[0]['id']
                     print(f"Created new area: {area_name}")
                 else:
-                    # Update existing area if content has changed
-                    area_id = existing_area.data[0]['id']
-                    if any(existing_area.data[0].get(k) != v for k, v in area_record.items()):
-                        supabase.table('Area').update(area_record).eq('id', area_id).execute()
-                        print(f"Updated existing area: {area_name}")
-                    else:
-                        print(f"Area {area_name} unchanged, skipping update")
+                    # Use existing area id without updating
+                    area_id = area_map[area_name]['id']
+                    print(f"Using existing area: {area_name}")
 
-                # Process and insert/update routes
-                routes = area_data.get('routes', [])
-                for route in routes:
+                # Get all existing routes for this area in one query
+                existing_routes = supabase.table('Route').select('*').eq('areaId', area_id).execute()
+                existing_route_names = {route['name'] for route in existing_routes.data}
+
+                # Prepare new routes for insertion
+                routes_to_insert = []
+                for route in area_data.get('routes', []):
                     route_name = route.get('name', '')
+                    if route_name and route_name not in existing_route_names:
+                        route_data = {
+                            'id': str(uuid.uuid4()),
+                            'name': route_name,
+                            'description': route.get('description', ''),
+                            'grade': route.get('grade', ''),
+                            'quality': route.get('quality', ''),
+                            'type': route.get('type', ''),
+                            'bolts': route.get('bolts', ''),
+                            'length': route.get('length', ''),
+                            'areaId': area_id,
+                            'createdBy': 'crawler'
+                        }
+                        routes_to_insert.append(route_data)
 
-                    # Check if route already exists in this area
-                    existing_route = supabase.table('Route').select('*').eq('name', route_name).eq('areaId', area_id).execute()
-
-                    route_data = {
-                        'name': route_name,
-                        'description': route.get('description', ''),
-                        'grade': route.get('grade', ''),
-                        'quality': route.get('quality', ''),
-                        'type': route.get('type', ''),
-                        'bolts': route.get('bolts', ''),
-                        'length': route.get('length', ''),
-                        'areaId': area_id,
-                        'createdBy': 'crawler'
-                    }
-
-                    if not existing_route.data:
-                        # Create new route if it doesn't exist
-                        route_data['id'] = str(uuid.uuid4())
-                        supabase.table('Route').insert(route_data).execute()
-                        print(f"Created new route: {route_name}")
-                    else:
-                        # Update existing route if content has changed
-                        route_id = existing_route.data[0]['id']
-                        if any(existing_route.data[0].get(k) != v for k, v in route_data.items() if k != 'createdBy'):
-                            supabase.table('Route').update(route_data).eq('id', route_id).execute()
-                            print(f"Updated existing route: {route_name}")
-                        else:
-                            print(f"Route {route_name} unchanged, skipping update")
+                # Batch insert new routes
+                if routes_to_insert:
+                    supabase.table('Route').insert(routes_to_insert).execute()
+                    print(f"Created {len(routes_to_insert)} new routes")
+                else:
+                    print("No new routes to add")
 
         print(f"Successfully processed area and routes from: {url}")
 

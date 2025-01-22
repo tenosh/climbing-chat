@@ -46,3 +46,4 @@ yarn-error.log*
 .idea
 
 /crawler/venv/
+/crawler/climbs/
