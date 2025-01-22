@@ -12,7 +12,7 @@ datasource db {
     // https://next-auth.js.org/adapters/prisma#create-the-prisma-schema
     // https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#string
     url      = env("POSTGRES_PRISMA_URL")
-    directUrl = env("POSTGRES_URL_NON_POOLING")
+    directUrl = env("POSTGRES_PRISMA_URL")
 }
 
 model Post {
@@ -73,4 +73,46 @@ model VerificationToken {
     expires    DateTime
 
     @@unique([identifier, token])
+}
+
+// Climbing Areas
+
+
+model Area {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  description     String?  @db.Text
+  approach        String?  @db.Text
+  ethic           String?  @db.Text
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  routes          Route[]
+  // Adding a searchVector field for full-text search
+  searchVector    Unsupported("tsvector")?
+
+  @@index([name])
+  // Adding a GIN index on the search vector
+  @@index([searchVector], type: Gin)
+}
+
+model Route {
+  id          String   @id @default(uuid())
+  name        String
+  description String?   @db.Text
+  grade       String?
+  quality     String?  // Keep as string to preserve original format
+  type        String?  // e.g., "Sport", "Trad", "Boulder"
+  bolts       String?  // Keep as string to preserve original format
+  length      String?  // Keep as string to preserve original format
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  createdBy   String?
+  area        Area     @relation(fields: [areaId], references: [id])
+  areaId      String
+  searchVector Unsupported("tsvector")?
+
+  @@unique([areaId, name])
+  @@index([grade])
+  @@index([type])
+  @@index([searchVector], type: Gin)
 }
