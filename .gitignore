@@ -47,3 +47,4 @@ yarn-error.log*
 
 /crawler/venv/
 /crawler/climbs/
+/ai-pruebas/node_modules/

@@ -67,38 +67,34 @@ model VerificationToken {
 }
 
 model Area {
-  id           String                   @id @default(uuid())
-  name         String                   @unique
-  description  String?
-  approach     String?
-  ethic        String?
-  createdAt    DateTime                 @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
-  updatedAt    DateTime                 @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
-  searchVector Unsupported("tsvector")?
-  routes       Route[]
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  approach    String?
+  ethic       String?
+  createdAt   DateTime @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
+  updatedAt   DateTime @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
+  routes      Route[]
 
   @@index([name])
-  @@index([searchVector], type: Gin)
 }
 
 model Route {
-  id           String                   @id @default(uuid())
-  name         String
-  description  String?
-  grade        String?
-  createdAt    DateTime?                @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
-  updatedAt    DateTime?                @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
-  areaId       String
-  searchVector Unsupported("tsvector")?
-  bolts        String?
-  createdBy    String?
-  length       String?
-  quality      String?
-  type         String?
-  area         Area                     @relation(fields: [areaId], references: [id])
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  grade       String?
+  createdAt   DateTime? @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
+  updatedAt   DateTime? @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
+  areaId      String
+  bolts       String?
+  createdBy   String?
+  length      String?
+  quality     String?
+  type        String?
+  area        Area      @relation(fields: [areaId], references: [id])
 
   @@unique([areaId, name])
   @@index([grade])
   @@index([type])
-  @@index([searchVector], type: Gin)
 }

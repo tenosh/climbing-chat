@@ -1,9 +1,7 @@
-import Link from "next/link";
 import { ChatBox } from "~/app/_components/ChatBox";
-import { auth } from "~/server/auth";
 
 export default async function Home() {
-  const session = await auth();
+  // const session = await auth();
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gradient-to-b from-[#2e026d] to-[#15162c] text-white">
@@ -13,7 +11,7 @@ export default async function Home() {
         </h1>
 
         {/* Auth section */}
-        <div className="flex flex-col items-center gap-2">
+        {/* <div className="flex flex-col items-center gap-2">
           <div className="flex flex-col items-center justify-center gap-4">
             <p className="text-center text-2xl text-white">
               {session && <span>Logged in as {session.user?.name}</span>}
@@ -25,10 +23,10 @@ export default async function Home() {
               {session ? "Sign out" : "Sign in"}
             </Link>
           </div>
-        </div>
+        </div> */}
 
         {/* Chat section */}
-        {session?.user && <ChatBox />}
+        <ChatBox />
       </div>
     </main>
   );
