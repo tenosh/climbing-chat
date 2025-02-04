@@ -9,8 +9,8 @@ export const chatRouter = createTRPCRouter({
     .mutation(async ({ input }) => {
       try {
         const result = await generateObject({
-          model: openai("gpt-4o"),
-          system: `You are a SQL (postgres) and data visualization expert specializing in climbing route data from Guadalcazar, San Luis Potosi, Mexico. Your job is to help users write SQL queries to retrieve route information. The table schema is as follows:
+          model: openai("gpt-4o-mini"),
+          system: `You are a SQL (postgres) expert specializing in climbing routes data from Guadalcazar, San Luis Potosi, Mexico. Your job is to help users write SQL queries to retrieve routes information. The table schema is as follows:
 
               "Route" (
                 id          String    @id @default(uuid())

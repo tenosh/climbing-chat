@@ -6,10 +6,7 @@ export default async function Home() {
 
   return (
     <HydrateClient>
-      <div className="container flex flex-col items-center justify-center gap-12 bg-black px-4 py-16 text-white">
-        <h1 className="my-10 text-5xl font-extrabold tracking-tight sm:text-[5rem]">
-          {hello.greeting}
-        </h1>
+      <div className="container mx-auto py-8">
         <PromptBox />
       </div>
     </HydrateClient>
