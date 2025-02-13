@@ -169,7 +169,7 @@ export const chatRouter = createTRPCRouter({
           ORDER BY rq.grade_value ASC;
 
           Remember to handle NULL values appropriately and use proper joins between route and area tables.`,
-          prompt: `Generate the query necessary to retrieve the data the user wants: ${input}`,
+          prompt: `Generate the query necessary to retrieve the data the user wants: ${JSON.stringify(input.prompt)}`,
           schema: z.object({
             query: z.string(),
           }),
@@ -217,7 +217,10 @@ export const chatRouter = createTRPCRouter({
 
       let data: any;
       try {
-        data = await ctx.db.$queryRawUnsafe(input.query);
+        data = (await ctx.db.$queryRawUnsafe(input.query)) as Record<
+          string,
+          unknown
+        >[];
       } catch (e: any) {
         debugger;
         console.error("Database error:", e);

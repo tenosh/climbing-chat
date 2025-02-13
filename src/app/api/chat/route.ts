@@ -321,10 +321,10 @@ export async function POST(req: Request) {
             // Update the data mapping
             const formatted_chunks = data.map(
               (doc: MatchedData) => `# ${doc.title}\n\n${doc.content}`,
-            );
+            ) as string[];
 
-            // Join all chunks with a separator
-            return formatted_chunks.join("\n\n---\n\n");
+            // Return with explicit type
+            return formatted_chunks.join("\n\n---\n\n") as string;
           } catch (error) {
             console.error("Error while retrieveRelevantClimbingData", error);
           }
