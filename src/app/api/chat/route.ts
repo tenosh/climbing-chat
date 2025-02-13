@@ -22,6 +22,27 @@ interface ChatRequest {
   messages: CoreMessage[];
 }
 
+// Add these interfaces for weather data typing
+interface WeatherReading {
+  dt: number;
+  dt_txt: string;
+  main: {
+    temp: number;
+    feels_like: number;
+    humidity: number;
+  };
+  weather: Array<{
+    description: string;
+  }>;
+  wind: {
+    speed: number;
+  };
+}
+
+interface WeatherResponse {
+  list: WeatherReading[];
+}
+
 export async function POST(req: Request) {
   const { messages }: ChatRequest = await req.json();
 
@@ -200,16 +221,18 @@ export async function POST(req: Request) {
               throw new Error("Weather API request failed");
             }
 
-            const weatherData = await response.json();
+            const weatherData: WeatherResponse = await response.json();
 
-            // Process and format the weather data
+            // Process and format the weather data with proper typing
             const forecast = weatherData.list
-              .filter((reading: any) => reading.dt_txt.includes("12:00:00")) // Get daily readings at noon
-              .map((reading: any) => ({
+              .filter((reading: WeatherReading) =>
+                reading.dt_txt.includes("12:00:00"),
+              )
+              .map((reading: WeatherReading) => ({
                 date: new Date(reading.dt * 1000).toLocaleDateString(),
                 temp: Math.round(reading.main.temp),
                 feels_like: Math.round(reading.main.feels_like),
-                conditions: reading.weather[0].description,
+                conditions: reading.weather[0]?.description || "Desconocido",
                 wind_speed: reading.wind.speed,
                 humidity: reading.main.humidity,
               }));
@@ -217,11 +240,14 @@ export async function POST(req: Request) {
             return {
               location,
               current: {
-                temp: Math.round(weatherData.list[0].main.temp),
-                feels_like: Math.round(weatherData.list[0].main.feels_like),
-                conditions: weatherData.list[0].weather[0].description,
-                wind_speed: weatherData.list[0].wind.speed,
-                humidity: weatherData.list[0].main.humidity,
+                temp: Math.round(weatherData.list[0]?.main.temp || 0),
+                feels_like: Math.round(
+                  weatherData.list[0]?.main.feels_like || 0,
+                ),
+                conditions:
+                  weatherData.list[0]?.weather[0]?.description || "Desconocido",
+                wind_speed: weatherData.list[0]?.wind.speed || 0,
+                humidity: weatherData.list[0]?.main.humidity || 0,
               },
               forecast,
             };
@@ -286,8 +312,15 @@ export async function POST(req: Request) {
 
             if (error) throw error;
 
+            // For the retrieveRelevantClimbingData tool, add interface for the matched data
+            interface MatchedData {
+              title: string;
+              content: string;
+            }
+
+            // Update the data mapping
             const formatted_chunks = data.map(
-              (doc: any) => `# ${doc.title}\n\n${doc.content}`,
+              (doc: MatchedData) => `# ${doc.title}\n\n${doc.content}`,
             );
 
             // Join all chunks with a separator
