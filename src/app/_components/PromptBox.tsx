@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-
+import type { Route } from "~/app/api/chat/route";
 import { api } from "~/trpc/react";
 
 export function PromptBox() {
   const [prompt, setPrompt] = useState("");
   const [isPending, setIsPending] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<Route[] | null>(null);
 
   const generateQuery = api.chat.generateQuery.useMutation();
   const runQuery = api.chat.runQuery.useMutation();
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsPending(true);
@@ -21,7 +22,7 @@ export function PromptBox() {
         return;
       }
       const data = await runQuery.mutateAsync({ query });
-      setResult(data);
+      setResult(data as Route[]);
     } finally {
       setIsPending(false);
     }
@@ -69,7 +70,7 @@ export function PromptBox() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700 bg-gray-900">
-              {result.map((item: any, index: number) => (
+              {result.map((item: Route, index: number) => (
                 <tr key={index} className="hover:bg-gray-800">
                   <td className="whitespace-nowrap px-6 py-4 text-gray-300">
                     {item.name}

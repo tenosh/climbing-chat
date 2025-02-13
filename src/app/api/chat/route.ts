@@ -1,10 +1,29 @@
 import { openai } from "@ai-sdk/openai";
-import { embed, generateObject, streamText, tool } from "ai";
+import { embed, generateObject, streamText, tool, type CoreMessage } from "ai";
 import { z } from "zod";
 import { supabase } from "../../../lib/supabase";
 
+export interface Route {
+  id: string;
+  name: string;
+  quality?: string;
+  type?: string;
+  grade?: string;
+  area_name?: string;
+  description?: string;
+  length?: number;
+  bolts?: number;
+  createdAt?: Date;
+  updatedAt?: Date;
+  areaId: string;
+}
+
+interface ChatRequest {
+  messages: CoreMessage[];
+}
+
 export async function POST(req: Request) {
-  const { messages } = await req.json();
+  const { messages }: ChatRequest = await req.json();
 
   const result = streamText({
     model: openai("gpt-4o-mini"),
