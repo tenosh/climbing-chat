@@ -74,6 +74,9 @@ model Area {
   ethic       String?
   createdAt   DateTime @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
   updatedAt   DateTime @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
+  place_id    String?
+  image       String?  @default("")
+  Place       Place?   @relation(fields: [place_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
   routes      Route[]
 
   @@index([name])
@@ -87,14 +90,44 @@ model Route {
   createdAt   DateTime? @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @db.Timestamptz(6)
   updatedAt   DateTime? @default(dbgenerated("(now() AT TIME ZONE 'utc'::text)")) @updatedAt @db.Timestamptz(6)
   areaId      String
-  bolts       String?
+  bolts       Int?      @db.SmallInt
   createdBy   String?
-  length      String?
-  quality     String?
+  length      Int?      @db.SmallInt
+  quality     Int?      @db.SmallInt
   type        String?
   area        Area      @relation(fields: [areaId], references: [id])
 
   @@unique([areaId, name])
   @@index([grade])
   @@index([type])
+}
+
+model Place {
+  created_at  DateTime     @default(now()) @db.Timestamptz(6)
+  name        String?      @default("")
+  description String?      @default("")
+  latitude    Decimal?     @db.Decimal
+  longitude   Decimal?     @db.Decimal
+  danger      Decimal?     @db.Decimal
+  id          String       @id(map: "Places_pkey") @default("")
+  image       String?      @default("")
+  Area        Area[]
+  place_data  place_data[]
+}
+
+/// This model contains row level security and requires additional setup for migrations. Visit https://pris.ly/d/row-level-security for more info.
+model place_data {
+  id           BigInt                 @id @default(autoincrement())
+  chunk_number Int
+  title        String                 @db.VarChar
+  summary      String                 @db.VarChar
+  content      String
+  metadata     Json                   @default("{}")
+  embedding    Unsupported("vector")?
+  created_at   DateTime               @default(dbgenerated("timezone('utc'::text, now())")) @db.Timestamptz(6)
+  place_id     String?
+  Place        Place?                 @relation(fields: [place_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([metadata], map: "idx_place_data_metadata", type: Gin)
+  @@index([embedding])
 }
