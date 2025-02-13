@@ -14,7 +14,7 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-area_name = "Panales"
+area_name = "Guadalcazar"
 
 # Initialize OpenAI and Supabase clients
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -24,7 +24,7 @@ supabase: Client = create_client(
 )
 
 # Get place_id for Guadalcazar - using title case for the area name
-result = supabase.table("Place").select("id").eq("name", "Guadalcazar").execute()
+result = supabase.table("place").select("id").eq("name", "Guadalcazar").execute()
 place_id = result.data[0]["id"] if result.data else None
 
 if not place_id:
@@ -52,14 +52,26 @@ async def get_embedding(text: str) -> List[float]:
         print(f"Error getting embedding: {e}")
         return [0] * 1536  # Return zero vector on error
 
-async def get_title_and_summary(chunk: str) -> Dict[str, str]:
+async def get_title_and_summary(chunk: str, is_place: bool = False) -> Dict[str, str]:
     """Extract title and summary using GPT-4."""
-    system_prompt = f"""You are an AI that extracts titles and summaries from data chunks.
-    Return a JSON object with 'title' and 'summary' keys.
-    For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, it will be route information, so make sure 'Rutas de escalada en {area_name} (Zona)' is the title.
-    For the summary: Create a concise summary of the main points in this chunk, include alternative names for the area if there are any.
-    All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
-    Keep both title and summary concise but informative."""
+    if is_place:
+        system_prompt = f"""You are an AI that extracts titles and summaries from place descriptions.
+        Return a JSON object with 'title' and 'summary' keys.
+        For the title: Extract the place name. If there are alternative names, include the main one in the title.
+        For the summary: Create a concise summary focusing on:
+        - Key geographical features
+        - Main attractions or characteristics
+        - Important facilities (if mentioned)
+        - Alternative names for the place (if any)
+        All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+        Keep both title and summary concise but informative."""
+    else:
+        system_prompt = f"""You are an AI that extracts titles and summaries from data chunks.
+        Return a JSON object with 'title' and 'summary' keys.
+        For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, it will be route information, so make sure 'Rutas de escalada en {area_name} (Zona)' is the title.
+        For the summary: Create a concise summary of the main points in this chunk, include alternative names for the area if there are any.
+        All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+        Keep both title and summary concise but informative."""
 
     try:
         response = await openai_client.chat.completions.create(
@@ -98,14 +110,14 @@ async def insert_chunk(chunk: ProcessedChunk):
 async def process_chunk(chunk: str, chunk_number: int) -> ProcessedChunk:
     """Process a single chunk of text."""
     # Get title and summary
-    extracted = await get_title_and_summary(chunk)
+    extracted = await get_title_and_summary(chunk, is_place=True)
 
     # Get embedding
     embedding = await get_embedding(chunk)
 
     # Create metadata
     metadata = {
-        "source": "guadalcazar",
+        "source": ["guadalcazar"],
         "chunk_size": len(chunk),
         "crawled_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -159,6 +171,56 @@ def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
 
     return chunks
 
+def chunk_text_places(text: str, chunk_size: int = 5000) -> List[str]:
+    """Split place description text into logical chunks based on main sections.
+    First chunk contains core info (name, description, access, ethics),
+    subsequent chunks contain auxiliary information (lodging, food, etc.)."""
+    chunks = []
+
+    # Define main section markers
+    core_sections = ["# ", "## Descripción", "## Acceso", "## Ética"]
+    auxiliary_sections = ["## Hospedaje", "## Alimentos", "## Transporte", "## Notas"]
+
+    # Find the start of the first auxiliary section
+    aux_start = -1
+    for section in auxiliary_sections:
+        pos = text.find(section)
+        if pos != -1 and (aux_start == -1 or pos < aux_start):
+            aux_start = pos
+
+    if aux_start != -1:
+        # First chunk: Core information (name through ethics)
+        core_chunk = text[:aux_start].strip()
+        if core_chunk:
+            chunks.append(core_chunk)
+
+        # Process auxiliary sections
+        current_chunk = []
+        current_size = 0
+
+        # Split remaining text into lines
+        for line in text[aux_start:].split('\n'):
+            # Start new section
+            if any(line.startswith(section) for section in auxiliary_sections):
+                # If we have content and exceed chunk size, save current chunk
+                if current_size >= chunk_size and current_chunk:
+                    chunks.append('\n'.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
+
+            # Add line to current chunk
+            current_chunk.append(line)
+            current_size += len(line) + 1  # +1 for newline
+
+        # Add remaining chunk if any
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
+    else:
+        # If no auxiliary sections found, return entire text as one chunk
+        chunks.append(text)
+
+    return chunks
+
 def read_guadalcazar_md(filename):
     # Define the directory path
     base_path = "./climbs/san_luis_potosi/guadalcazar"
@@ -180,9 +242,10 @@ async def main():
     # Specify the filename you want to read
     filename = f"{area_name}.md"  # Change this to your desired filename
     content = read_guadalcazar_md(filename)
+
     if content:
         print("Processing file contents...")
-        chunks = chunk_text(content)
+        chunks = chunk_text_places(content)
 
         # Process chunks in parallel
         tasks = [process_chunk(chunk, i) for i, chunk in enumerate(chunks)]
