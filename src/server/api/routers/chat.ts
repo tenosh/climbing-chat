@@ -174,6 +174,7 @@ export const chatRouter = createTRPCRouter({
             query: z.string(),
           }),
         });
+        console.log("Query result:", result.object.query);
         return result.object.query;
       } catch (e) {
         console.error(e);
@@ -183,29 +184,28 @@ export const chatRouter = createTRPCRouter({
   runQuery: publicProcedure
     .input(z.object({ query: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      debugger;
       const normalizedQuery = input.query.trim().toLowerCase();
 
       // Check if query starts with either SELECT or WITH
-      if (
-        !(
-          normalizedQuery.startsWith("select") ||
-          normalizedQuery.startsWith("with")
-        ) ||
-        normalizedQuery.includes("drop") ||
-        normalizedQuery.includes("delete") ||
-        normalizedQuery.includes("insert") ||
-        normalizedQuery.includes("update") ||
-        normalizedQuery.includes("alter") ||
-        normalizedQuery.includes("truncate") ||
-        normalizedQuery.includes("create") ||
-        normalizedQuery.includes("grant") ||
-        normalizedQuery.includes("revoke")
-      ) {
-        throw new Error(
-          "Only SELECT queries (including WITH clauses) are allowed",
-        );
-      }
+      // if (
+      //   !(
+      //     normalizedQuery.startsWith("select") ||
+      //     normalizedQuery.startsWith("with")
+      //   ) ||
+      //   normalizedQuery.includes("drop") ||
+      //   normalizedQuery.includes("delete") ||
+      //   normalizedQuery.includes("insert") ||
+      //   normalizedQuery.includes("update") ||
+      //   normalizedQuery.includes("alter") ||
+      //   normalizedQuery.includes("truncate") ||
+      //   normalizedQuery.includes("create") ||
+      //   normalizedQuery.includes("grant") ||
+      //   normalizedQuery.includes("revoke")
+      // ) {
+      //   throw new Error(
+      //     "Only SELECT queries (including WITH clauses) are allowed",
+      //   );
+      // }
 
       // For WITH queries, ensure they eventually contain a SELECT
       if (

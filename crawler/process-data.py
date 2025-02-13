@@ -14,6 +14,8 @@ from supabase import create_client, Client
 
 load_dotenv()
 
+area_name = "Panales"
+
 # Initialize OpenAI and Supabase clients
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 supabase: Client = create_client(
@@ -21,12 +23,12 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_KEY")
 )
 
-# Get place_id for Guadalcazar
+# Get place_id for Guadalcazar - using title case for the area name
 result = supabase.table("Place").select("id").eq("name", "Guadalcazar").execute()
 place_id = result.data[0]["id"] if result.data else None
 
 if not place_id:
-    raise ValueError("Place 'Guadalcazar' not found in the database")
+    raise ValueError(f"Place Guadalcazar not found in the database")
 
 @dataclass
 class ProcessedChunk:
@@ -52,10 +54,11 @@ async def get_embedding(text: str) -> List[float]:
 
 async def get_title_and_summary(chunk: str) -> Dict[str, str]:
     """Extract title and summary using GPT-4."""
-    system_prompt = """You are an AI that extracts titles and summaries from data chunks.
+    system_prompt = f"""You are an AI that extracts titles and summaries from data chunks.
     Return a JSON object with 'title' and 'summary' keys.
-    For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, derive a descriptive title.
-    For the summary: Create a concise summary of the main points in this chunk.
+    For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, it will be route information, so make sure 'Rutas de escalada en {area_name} (Zona)' is the title.
+    For the summary: Create a concise summary of the main points in this chunk, include alternative names for the area if there are any.
+    All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
     Keep both title and summary concise but informative."""
 
     try:
@@ -102,7 +105,7 @@ async def process_chunk(chunk: str, chunk_number: int) -> ProcessedChunk:
 
     # Create metadata
     metadata = {
-        "source": "cactux",
+        "source": "guadalcazar",
         "chunk_size": len(chunk),
         "crawled_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -118,61 +121,41 @@ async def process_chunk(chunk: str, chunk_number: int) -> ProcessedChunk:
     )
 
 def chunk_text(text: str, chunk_size: int = 5000) -> List[str]:
-    """Split text into chunks, keeping metadata sections together and respecting route boundaries."""
+    """Split text into chunks, with metadata sections together and routes in separate chunks."""
     chunks = []
 
-    # Find the end of the metadata section (Title through Ethics)
-    metadata_sections = ["# ", "## Description", "## Approach", "## Ethics"]
-    last_metadata_pos = -1
+    # First chunk: Title through Ethics sections
+    metadata_sections = ["# ", "## Descripción", "## Acceso", "## Ética"]
+    routes_start = text.find("## Rutas")
 
-    for section in metadata_sections:
-        pos = text.find(section)
-        if pos != -1:
-            section_end = text.find("\n## ", pos + len(section))
-            if section_end != -1:
-                last_metadata_pos = max(last_metadata_pos, section_end)
+    if routes_start != -1:
+        # Add metadata sections as first chunk
+        metadata_chunk = text[:routes_start].strip()
+        if metadata_chunk:
+            chunks.append(metadata_chunk)
 
-    # If we found metadata sections, make them the first chunk
-    if last_metadata_pos != -1:
-        first_chunk = text[:last_metadata_pos].strip()
-        if first_chunk:
-            chunks.append(first_chunk)
-        remaining_text = text[last_metadata_pos:]
-    else:
-        remaining_text = text
+        # Process routes section
+        routes_text = text[routes_start:]
+        current_chunk = []
+        current_size = 0
 
-    # Process the rest of the text
-    start = 0
-    text_length = len(remaining_text)
+        # Split routes into lines
+        for line in routes_text.split('\n'):
+            # Start new route section
+            if line.startswith('### '):
+                # If we have content and exceed chunk size, save current chunk
+                if current_size >= chunk_size and current_chunk:
+                    chunks.append('\n'.join(current_chunk))
+                    current_chunk = []
+                    current_size = 0
 
-    while start < text_length:
-        # Calculate end position
-        end = start + chunk_size
+            # Add line to current chunk
+            current_chunk.append(line)
+            current_size += len(line) + 1  # +1 for newline
 
-        # If we're at the end of the text, just take what's left
-        if end >= text_length:
-            chunks.append(remaining_text[start:].strip())
-            break
-
-        # Try to find a route boundary (### )
-        chunk = remaining_text[start:end]
-        next_route = chunk.rfind('\n### ')
-        if next_route != -1 and next_route > chunk_size * 0.3:
-            end = start + next_route
-
-        # If no route boundary, try to break at a paragraph
-        elif '\n\n' in chunk:
-            last_break = chunk.rfind('\n\n')
-            if last_break > chunk_size * 0.3:
-                end = start + last_break
-
-        # Extract chunk and clean it up
-        chunk = remaining_text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-
-        # Move start position for next chunk
-        start = end
+        # Add remaining chunk if any
+        if current_chunk:
+            chunks.append('\n'.join(current_chunk))
 
     return chunks
 
@@ -195,7 +178,7 @@ def read_guadalcazar_md(filename):
 
 async def main():
     # Specify the filename you want to read
-    filename = "guadalcazar.md"  # Change this to your desired filename
+    filename = f"{area_name}.md"  # Change this to your desired filename
     content = read_guadalcazar_md(filename)
     if content:
         print("Processing file contents...")
@@ -204,6 +187,19 @@ async def main():
         # Process chunks in parallel
         tasks = [process_chunk(chunk, i) for i, chunk in enumerate(chunks)]
         processed_chunks = await asyncio.gather(*tasks)
+
+       # Print the processed chunks
+        # for chunk in processed_chunks:
+        #     print("\n" + "="*80)  # Clear separator line
+        #     print(f"CHUNK {chunk.chunk_number}")
+        #     print("="*80)
+        #     print(f"TITLE: {chunk.title}")
+        #     print(f"SUMMARY: {chunk.summary}")
+        #     print("\nCONTENT:")
+        #     print(chunk.content)
+        #     print("\nMETADATA:")
+        #     print(chunk.metadata)
+        #     print("="*80 + "\n")  # Bottom separator line
 
          # Store chunks in parallel
         insert_tasks = [
