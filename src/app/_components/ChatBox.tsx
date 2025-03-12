@@ -73,7 +73,7 @@ Va, pregúntame lo que quieras...`,
                     if (part.type === "tool-invocation") {
                       return (
                         <div key={index}>
-                          {/* tool name: {part.toolInvocation.toolName} */}
+                          tool name: {part.toolInvocation.toolName}
                         </div>
                       );
                     }

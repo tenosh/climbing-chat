@@ -166,7 +166,8 @@ export async function POST(req: Request) {
         },
       }),
       weather: tool({
-        description: "Get current and forecast weather for a climbing location",
+        description:
+          "Get current and forecast weather for a climbing location, give the user the average temp for the day, neither max or min.",
         parameters: z.object({
           location: z.string().describe("The climbing zone to get weather for"),
         }),

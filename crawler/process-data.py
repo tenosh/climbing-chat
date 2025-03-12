@@ -14,7 +14,7 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-area_name = "Guadalcazar"
+area_name = "Gruta de las Candelas"
 
 # Initialize OpenAI and Supabase clients
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -100,7 +100,7 @@ async def insert_chunk(chunk: ProcessedChunk):
             "place_id": chunk.place_id
         }
 
-        result = supabase.table("place_data").insert(data).execute()
+        result = supabase.table("rag_data").insert(data).execute()
         print(f"Inserted chunk {chunk.chunk_number}")
         return result
     except Exception as e:
@@ -110,14 +110,14 @@ async def insert_chunk(chunk: ProcessedChunk):
 async def process_chunk(chunk: str, chunk_number: int) -> ProcessedChunk:
     """Process a single chunk of text."""
     # Get title and summary
-    extracted = await get_title_and_summary(chunk, is_place=True)
+    extracted = await get_title_and_summary(chunk, is_place=False)
 
     # Get embedding
     embedding = await get_embedding(chunk)
 
     # Create metadata
     metadata = {
-        "source": ["guadalcazar"],
+        "source": ["candelas", "guadalcazar"], #IMPORTANT: Add the source of the data for each different source
         "chunk_size": len(chunk),
         "crawled_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -245,7 +245,7 @@ async def main():
 
     if content:
         print("Processing file contents...")
-        chunks = chunk_text_places(content)
+        chunks = chunk_text(content)
 
         # Process chunks in parallel
         tasks = [process_chunk(chunk, i) for i, chunk in enumerate(chunks)]
