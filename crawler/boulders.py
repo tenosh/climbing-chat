@@ -23,7 +23,8 @@ supabase: Client = create_client(
 # Configuration
 BASE_PATH = "./climbs/san_luis_potosi/guadalcazar/boulders.xlsx"
 AREA_ID = "5f08920b-ff8b-45ed-b3f8-a4976bdd71b7"
-DEFAULT_DESCRIPTION = "Descripción temporal del boulder"
+DEFAULT_DESCRIPTION = "Boulder en proceso de documentación. Si tienes información sobre este problema, ¡ayúdanos a completarla!"
+DEFAULT_GRADE = "v0"
 DEFAULT_QUALITY = 100
 DEFAULT_TYPE = ["boulder"]
 BUCKET_NAME = "cactux"
@@ -247,7 +248,7 @@ class BoulderImporter:
 
         boulder = {
             "name": row.iloc[0],  # Column 1 (index 0) is the name
-            "grade": row.iloc[1],  # Column 2 (index 1) is the grade
+            "grade": row.iloc[1] if pd.notna(row.iloc[1]) else DEFAULT_GRADE,  # Use default grade if none provided
             "description": row.iloc[2] if pd.notna(row.iloc[2]) else DEFAULT_DESCRIPTION,  # Column 3 (index 2) is the description
             "latitude": lat,  # Using converted latitude
             "longitude": lon,  # Using converted longitude
