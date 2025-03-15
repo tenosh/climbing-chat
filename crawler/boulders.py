@@ -10,6 +10,7 @@ import requests
 from pathlib import Path
 import uuid
 import re
+from openpyxl import load_workbook
 
 load_dotenv()
 
@@ -33,38 +34,94 @@ class BoulderImporter:
         self.excel_file_path = excel_file_path
 
     def read_excel_file(self) -> pd.DataFrame:
-        """Read data from the Excel file."""
+        """Read data from the Excel file including binary image data."""
         try:
-            df = pd.read_excel(self.excel_file_path)
-            print(f"Successfully read {len(df)} rows from {self.excel_file_path}")
+            # First, load the workbook directly with openpyxl to access images
+            wb = load_workbook(self.excel_file_path)
+            sheet = wb.active
+
+            # Create a dictionary to store image data by cell position
+            image_data = {}
+
+            # Extract images from the worksheet
+            for image in sheet._images:
+                # Get the cell position (row, col) where the image is anchored
+                row = image.anchor._from.row + 1  # 1-based indexing
+                col = image.anchor._from.col + 1  # 1-based indexing
+
+                # Store the image data
+                image_data[(row, col)] = image._data()
+
+            # Now read the regular data with pandas
+            df = pd.read_excel(self.excel_file_path, engine='openpyxl')
+
+
+            # Add an image column if it doesn't exist
+            if len(df.columns) <= 6:
+                df['image'] = None
+
+            # Determine the correct image column index
+            image_col_name = df.columns[6] if len(df.columns) > 6 else 'image'
+
+            # For each row in the dataframe, check if there's an image
+            for i, row in df.iterrows():
+                # Excel rows are 1-indexed, but pandas is 0-indexed
+                excel_row = i + 2  # +2 because Excel is 1-indexed and there's usually a header row
+
+                # Check if there's an image for this cell
+                if (excel_row, 7) in image_data:  # Column 7 in Excel (1-indexed)
+                    # Add the image data to the dataframe
+                    df.at[i, image_col_name] = image_data[(excel_row, 7)]
+
             return df
         except Exception as e:
             print(f"Error reading Excel file: {str(e)}")
+            import traceback
+            traceback.print_exc()
             raise
 
-    def process_image(self, image_path: str) -> Optional[str]:
+    def process_image(self, image_data: Any) -> Optional[str]:
         """
-        Process an image:
-        1. Crop to 4:3 aspect ratio
-        2. Optimize
-        3. Convert to .webp format
+        Process an image from various sources:
+        1. URL string
+        2. Local file path string
+        3. Binary data from Excel
+
+        The image is:
+        1. Cropped to 4:3 aspect ratio
+        2. Optimized
+        3. Converted to .webp format
+
         Returns the path to the processed image in Supabase storage
         """
-        if not image_path or pd.isna(image_path):
+        if image_data is None or pd.isna(image_data):
+            print("No image data provided (None or NaN)")
             return None
 
         try:
-            # Handle both local files and URLs
-            if image_path.startswith(('http://', 'https://')):
-                response = requests.get(image_path, stream=True)
-                response.raise_for_status()
-                img = Image.open(io.BytesIO(response.content))
+            # Handle different types of image sources
+            if isinstance(image_data, str):
+                if image_data.startswith(('http://', 'https://')):
+                    # Handle URL
+                    print(f"Processing image from URL: {image_data}")
+                    response = requests.get(image_data, stream=True)
+                    response.raise_for_status()
+                    img = Image.open(io.BytesIO(response.content))
+                else:
+                    # Handle local file path
+                    print(f"Processing image from local path: {image_data}")
+                    img = Image.open(image_data)
             else:
-                img = Image.open(image_path)
+                # Handle binary data from Excel
+                print("Processing binary image data from Excel")
+                img = Image.open(io.BytesIO(image_data))
+
+            # Print image details after opening
+            print(f"Successfully opened image: {img.format}, size: {img.size}, mode: {img.mode}")
 
             # Calculate dimensions for 4:3 aspect ratio crop
             width, height = img.size
-            target_ratio = 4/3
+            target_ratio = 3/4
 
             if width/height > target_ratio:
                 # Image is wider than 4:3, crop width
@@ -82,7 +139,38 @@ class BoulderImporter:
             temp_path = f"temp_{unique_id}.webp"
 
             # Save as webp with optimization
-            img.save(temp_path, format="WEBP", quality=85, optimize=True)
+            quality = 85  # Start with this quality
+            max_size_kb = 500  # Maximum file size in KB
+            current_width, current_height = img.size
+
+            while True:
+                img.save(temp_path, format="WEBP", quality=quality, optimize=True)
+                file_size_kb = os.path.getsize(temp_path) / 1024
+
+                if file_size_kb <= max_size_kb:
+                    print(f"Saved image at quality {quality}, size: {file_size_kb:.2f}KB, dimensions: {img.size}")
+                    break
+
+                if quality > 10:
+                    # First try reducing quality
+                    quality -= 10
+                    print(f"Image too large ({file_size_kb:.2f}KB), reducing quality to {quality}")
+                else:
+                    # If quality is already at minimum, reduce dimensions
+                    new_width = int(current_width * 0.8)
+                    new_height = int(current_height * 0.8)
+                    img = img.resize((new_width, new_height), Image.LANCZOS)
+                    current_width, current_height = new_width, new_height
+                    quality = 60  # Reset quality after resizing
+                    print(f"Image too large at minimum quality, resizing to {new_width}x{new_height}")
+
+                    # If image becomes too small, stop resizing
+                    if new_width < 500 or new_height < 500:
+                        print("Warning: Image dimensions getting too small, saving anyway")
+                        img.save(temp_path, format="WEBP", quality=quality, optimize=True)
+                        break
+
+            print(f"Saved temporary image to {temp_path}")
 
             # Upload to Supabase storage
             storage_path = f"{STORAGE_FOLDER}/{unique_id}.webp"
@@ -92,21 +180,34 @@ class BoulderImporter:
                     file=f,
                     file_options={"content-type": "image/webp"}
                 )
+            print(f"Uploaded image to Supabase storage: {storage_path}")
 
             # Clean up temp file
             os.remove(temp_path)
 
             # Return the public URL
-            return supabase.storage.from_(BUCKET_NAME).get_public_url(storage_path)
+            public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(storage_path)
+            print(f"Generated public URL: {public_url}")
+            return public_url
 
         except Exception as e:
-            print(f"Error processing image {image_path}: {str(e)}")
+            print(f"Error processing image: {str(e)}")
+            import traceback
+            traceback.print_exc()  # Print full stack trace
             return None
 
     def prepare_boulder_data(self, row: pd.Series) -> Dict[str, Any]:
         """Convert a row of Excel data to a boulder database record."""
-        # Process image if available
-        image_url = self.process_image(row.get(6))  # Column 7 (index 6) is the image
+        # Process image if available - use the image column name
+        # Try to get image from the 'image' column or the 7th column if it exists
+        image_data = None
+        if 'image' in row.index:
+            image_data = row.get('image')
+        elif len(row) > 6:
+            image_data = row.get(6)
+
+        print(f"\nProcessing image for boulder: {row.get(0)}")
+        image_url = self.process_image(image_data)
 
         # Convert coordinates from DMS to decimal degrees if needed
         lat = row.get(3)
@@ -216,7 +317,7 @@ class BoulderImporter:
         print(f"Description: {boulder['description']}")
         print(f"Location: Lat {boulder['latitude']}, Lon {boulder['longitude']}")
         print(f"Height: {boulder['height']}")
-        print(f"Image URL: {boulder['image']}")
+        print(f"Image: {boulder['image']}")
         print(f"Area ID: {boulder['areaId']}")
         print(f"Quality: {boulder['quality']}")
         print(f"Type: {boulder['type']}")
