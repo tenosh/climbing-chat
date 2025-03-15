@@ -141,6 +141,24 @@ class BoulderImporter:
             # Save as webp with optimization
             quality = 85  # Start with this quality
             max_size_kb = 500  # Maximum file size in KB
+
+            # First, resize to max dimensions while maintaining aspect ratio
+            max_width = 900
+            max_height = 1200
+            current_width, current_height = img.size
+
+            # Calculate scaling factor to fit within max dimensions
+            width_ratio = max_width / current_width
+            height_ratio = max_height / current_height
+            scale_factor = min(width_ratio, height_ratio)
+
+            # Only resize if image is larger than the max dimensions
+            if scale_factor < 1:
+                new_width = int(current_width * scale_factor)
+                new_height = int(current_height * scale_factor)
+                img = img.resize((new_width, new_height), Image.LANCZOS)
+                print(f"Resized image to {new_width}x{new_height} to fit within max dimensions")
+
             current_width, current_height = img.size
 
             while True:
