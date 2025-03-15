@@ -202,16 +202,16 @@ class BoulderImporter:
         # Try to get image from the 'image' column or the 7th column if it exists
         image_data = None
         if 'image' in row.index:
-            image_data = row.get('image')
+            image_data = row['image']
         elif len(row) > 6:
-            image_data = row.get(6)
+            image_data = row.iloc[6]
 
-        print(f"\nProcessing image for boulder: {row.get(0)}")
+        print(f"\nProcessing image for boulder: {row.iloc[0]}")
         image_url = self.process_image(image_data)
 
         # Convert coordinates from DMS to decimal degrees if needed
-        lat = row.get(3)
-        lon = row.get(4)
+        lat = row.iloc[3] if len(row) > 3 else None
+        lon = row.iloc[4] if len(row) > 4 else None
 
         if pd.notna(lat) and isinstance(lat, str) and ('°' in lat or "'" in lat or '"' in lat):
             lat = self.dms_to_decimal(lat)
@@ -228,12 +228,12 @@ class BoulderImporter:
             lon = None
 
         boulder = {
-            "name": row.get(0),  # Column 1 (index 0) is the name
-            "grade": row.get(1),  # Column 2 (index 1) is the grade
-            "description": row.get(2) if pd.notna(row.get(2)) else DEFAULT_DESCRIPTION,  # Column 3 (index 2) is the description
+            "name": row.iloc[0],  # Column 1 (index 0) is the name
+            "grade": row.iloc[1],  # Column 2 (index 1) is the grade
+            "description": row.iloc[2] if pd.notna(row.iloc[2]) else DEFAULT_DESCRIPTION,  # Column 3 (index 2) is the description
             "latitude": lat,  # Using converted latitude
             "longitude": lon,  # Using converted longitude
-            "height": row.get(5) if pd.notna(row.get(5)) else None,  # Column 6 (index 5) is height
+            "height": row.iloc[5] if len(row) > 5 and pd.notna(row.iloc[5]) else None,  # Column 6 (index 5) is height
             "image": image_url,
             "areaId": AREA_ID,
             "quality": DEFAULT_QUALITY,
@@ -344,7 +344,7 @@ class BoulderImporter:
                 #     print("Skipping this boulder.")
                 #     continue
 
-                # await self.insert_boulder(boulder_data)
+                await self.insert_boulder(boulder_data)
             except Exception as e:
                 print(f"Error processing row {index}: {str(e)}")
 
