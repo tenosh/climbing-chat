@@ -26,7 +26,7 @@ AREA_ID = "5f08920b-ff8b-45ed-b3f8-a4976bdd71b7"
 DEFAULT_DESCRIPTION = "Boulder en proceso de documentación. Si tienes información sobre este problema, ¡ayúdanos a completarla!"
 DEFAULT_GRADE = "v0"
 DEFAULT_QUALITY = 100
-DEFAULT_TYPE = ["boulder"]
+DEFAULT_TYPE = "boulder"
 BUCKET_NAME = "cactux"
 STORAGE_FOLDER = "boulders"
 
