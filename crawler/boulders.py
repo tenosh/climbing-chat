@@ -141,7 +141,7 @@ class BoulderImporter:
 
             # Save as webp with optimization
             quality = 85  # Start with this quality
-            max_size_kb = 500  # Maximum file size in KB
+            max_size_kb = 300  # Maximum file size in KB
 
             # First, resize to max dimensions while maintaining aspect ratio
             max_width = 900
@@ -206,6 +206,11 @@ class BoulderImporter:
 
             # Return the public URL
             public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(storage_path)
+
+            # Remove trailing question mark if present
+            if public_url.endswith('?'):
+                public_url = public_url[:-1]
+
             print(f"Generated public URL: {public_url}")
             return public_url
 
