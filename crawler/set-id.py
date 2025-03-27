@@ -14,9 +14,9 @@ supabase: Client = create_client(
 )
 
 # Configuration
-FILE_NAME = "Gruta de las Candelas.md"
+FILE_NAME = "San Cayetano.md"
 BASE_PATH = "./climbs/san_luis_potosi/guadalcazar"
-AREA_ID = "812691b8-25a4-4817-86c8-369979149d14"  # Area ID for Gruta de las Candelas
+SECTOR_ID = "14210743-d8a6-446b-93c8-5c867943ea40"  # Area ID for San Cayetano
 
 class RouteIdUpdater:
     def __init__(self, base_path: str = BASE_PATH):
@@ -48,10 +48,10 @@ class RouteIdUpdater:
     async def get_route_ids(self) -> Dict[str, str]:
         """Fetch route IDs from the database by name."""
         try:
-            result = supabase.table("route").select("id, name").eq("areaId", AREA_ID).execute()
+            result = supabase.table("route").select("id, name").eq("sector_id", SECTOR_ID).execute()
 
             if not result.data:
-                print(f"No routes found for area ID: {AREA_ID}")
+                print(f"No routes found for area ID: {SECTOR_ID}")
                 return {}
 
             route_ids = {route["name"]: route["id"] for route in result.data}

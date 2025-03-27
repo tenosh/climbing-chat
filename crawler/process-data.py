@@ -14,7 +14,7 @@ from supabase import create_client, Client
 
 load_dotenv()
 
-area_name = "Gruta de las Candelas"
+area_name = "San Cayetano"
 
 # Initialize OpenAI and Supabase clients
 openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -23,16 +23,10 @@ supabase: Client = create_client(
     os.getenv("SUPABASE_SERVICE_KEY")
 )
 
-# Get place_id for Guadalcazar - using title case for the area name
-result = supabase.table("place").select("id").eq("name", "Guadalcazar").execute()
-place_id = result.data[0]["id"] if result.data else None
-
-if not place_id:
-    raise ValueError(f"Place Guadalcazar not found in the database")
+place_id = "1a7f52b5-6c01-45ed-9368-b80c5bb3ce2b" #IMPORTANT: Add the place id for the area
 
 @dataclass
 class ProcessedChunk:
-    chunk_number: int
     title: str
     summary: str
     content: str
@@ -52,7 +46,7 @@ async def get_embedding(text: str) -> List[float]:
         print(f"Error getting embedding: {e}")
         return [0] * 1536  # Return zero vector on error
 
-async def get_title_and_summary(chunk: str, is_place: bool = False) -> Dict[str, str]:
+async def get_title_and_summary(chunk: str, is_place: bool = False, chunk_number: int = 0) -> Dict[str, str]:
     """Extract title and summary using GPT-4."""
     if is_place:
         system_prompt = f"""You are an AI that extracts titles and summaries from place descriptions.
@@ -65,10 +59,17 @@ async def get_title_and_summary(chunk: str, is_place: bool = False) -> Dict[str,
         - Alternative names for the place (if any)
         All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
         Keep both title and summary concise but informative."""
+    elif chunk_number == 0:
+        system_prompt = f"""You are an AI that extracts titles and summaries from data chunks.
+        Return a JSON object with 'title' and 'summary' keys.
+        For the title: extract its title.
+        For the summary: Create a concise summary of the main points in this chunk, include alternative names for the area if there are any.
+        All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+        Keep both title and summary concise but informative."""
     else:
         system_prompt = f"""You are an AI that extracts titles and summaries from data chunks.
         Return a JSON object with 'title' and 'summary' keys.
-        For the title: If this seems like the start of a document, extract its title. If it's a middle chunk, it will be route information, so make sure 'Rutas de escalada en {area_name} (Zona)' is the title.
+        For the title: If this seems like the start of a document (starts with "CONTENT:"), extract its title. If it's a middle chunk, it will be route information, so make sure 'Rutas de escalada en {area_name} (Zona)' is the title.
         For the summary: Create a concise summary of the main points in this chunk, include alternative names for the area if there are any.
         All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
         Keep both title and summary concise but informative."""
@@ -91,7 +92,6 @@ async def insert_chunk(chunk: ProcessedChunk):
     """Insert a processed chunk into Supabase."""
     try:
         data = {
-            "chunk_number": chunk.chunk_number,
             "title": chunk.title,
             "summary": chunk.summary,
             "content": chunk.content,
@@ -101,7 +101,7 @@ async def insert_chunk(chunk: ProcessedChunk):
         }
 
         result = supabase.table("rag_data").insert(data).execute()
-        print(f"Inserted chunk {chunk.chunk_number}")
+        print("Inserted chunk")
         return result
     except Exception as e:
         print(f"Error inserting chunk: {e}")
@@ -110,20 +110,19 @@ async def insert_chunk(chunk: ProcessedChunk):
 async def process_chunk(chunk: str, chunk_number: int) -> ProcessedChunk:
     """Process a single chunk of text."""
     # Get title and summary
-    extracted = await get_title_and_summary(chunk, is_place=False)
+    extracted = await get_title_and_summary(chunk, is_place=False, chunk_number=chunk_number)
 
     # Get embedding
     embedding = await get_embedding(chunk)
 
     # Create metadata
     metadata = {
-        "source": ["candelas", "guadalcazar"], #IMPORTANT: Add the source of the data for each different source
+        "source": ["san cayetano", "guadalcazar"], #IMPORTANT: Add the source of the data for each different source
         "chunk_size": len(chunk),
         "crawled_at": datetime.now(timezone.utc).isoformat(),
     }
 
     return ProcessedChunk(
-        chunk_number=chunk_number,
         title=extracted['title'],
         summary=extracted['summary'],
         content=chunk,  # Store the original chunk content
@@ -254,7 +253,6 @@ async def main():
        # Print the processed chunks
         # for chunk in processed_chunks:
         #     print("\n" + "="*80)  # Clear separator line
-        #     print(f"CHUNK {chunk.chunk_number}")
         #     print("="*80)
         #     print(f"TITLE: {chunk.title}")
         #     print(f"SUMMARY: {chunk.summary}")

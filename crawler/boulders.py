@@ -22,9 +22,9 @@ supabase: Client = create_client(
 
 # Configuration
 BASE_PATH = "./climbs/san_luis_potosi/guadalcazar/boulders.xlsx"
-AREA_ID = "5f08920b-ff8b-45ed-b3f8-a4976bdd71b7"
+SECTOR_ID = "5f08920b-ff8b-45ed-b3f8-a4976bdd71b7"
 DEFAULT_DESCRIPTION = "Boulder en proceso de documentación. Si tienes información sobre este problema, ¡ayúdanos a completarla!"
-DEFAULT_GRADE = "v0"
+DEFAULT_GRADE = "desconocido"
 DEFAULT_QUALITY = 100
 DEFAULT_TYPE = "boulder"
 BUCKET_NAME = "cactux"
@@ -58,11 +58,11 @@ class BoulderImporter:
 
 
             # Add an image column if it doesn't exist
-            if len(df.columns) <= 6:
+            if len(df.columns) <= 7:
                 df['image'] = None
 
             # Determine the correct image column index
-            image_col_name = df.columns[6] if len(df.columns) > 6 else 'image'
+            image_col_name = df.columns[7] if len(df.columns) > 7 else 'image'
 
             # For each row in the dataframe, check if there's an image
             for i, row in df.iterrows():
@@ -70,9 +70,9 @@ class BoulderImporter:
                 excel_row = i + 2  # +2 because Excel is 1-indexed and there's usually a header row
 
                 # Check if there's an image for this cell
-                if (excel_row, 7) in image_data:  # Column 7 in Excel (1-indexed)
+                if (excel_row, 8) in image_data:  # Column 8 in Excel (1-indexed)
                     # Add the image data to the dataframe
-                    df.at[i, image_col_name] = image_data[(excel_row, 7)]
+                    df.at[i, image_col_name] = image_data[(excel_row, 8)]
 
             return df
         except Exception as e:
@@ -222,13 +222,10 @@ class BoulderImporter:
 
     def prepare_boulder_data(self, row: pd.Series) -> Dict[str, Any]:
         """Convert a row of Excel data to a boulder database record."""
-        # Process image if available - use the image column name
-        # Try to get image from the 'image' column or the 7th column if it exists
+        # Process image if available - the image is in the 8th column (index 7)
         image_data = None
-        if 'image' in row.index:
-            image_data = row['image']
-        elif len(row) > 6:
-            image_data = row.iloc[6]
+        if len(row) > 7:
+            image_data = row.iloc[7]
 
         print(f"\nProcessing image for boulder: {row.iloc[0]}")
         image_url = self.process_image(image_data)
@@ -258,9 +255,9 @@ class BoulderImporter:
             "latitude": lat,  # Using converted latitude
             "longitude": lon,  # Using converted longitude
             "height": row.iloc[5] if len(row) > 5 and pd.notna(row.iloc[5]) else None,  # Column 6 (index 5) is height
+            "quality": self.extract_quality(row),  # Extract quality from the document
             "image": image_url,
-            "areaId": AREA_ID,
-            "quality": DEFAULT_QUALITY,
+            "sector_id": SECTOR_ID,
             "type": DEFAULT_TYPE
         }
 
@@ -318,11 +315,25 @@ class BoulderImporter:
             print(f"Could not parse coordinate: {dms_str}")
             return None
 
+    def extract_quality(self, row: pd.Series) -> int:
+        """Extract quality from the row, converting to int if necessary."""
+        # Quality is in column 7 (index 6)
+        if len(row) > 6 and pd.notna(row.iloc[6]):
+            try:
+                return int(row.iloc[6])
+            except (ValueError, TypeError):
+                # If conversion fails, use default
+                print(f"Could not convert quality '{row.iloc[6]}' to integer, using default")
+                return DEFAULT_QUALITY
+
+        # If no quality found or it's NaN, use default
+        return DEFAULT_QUALITY
+
     async def insert_boulder(self, boulder: Dict[str, Any]) -> None:
         """Insert a boulder into the database."""
         try:
             # Check if boulder already exists with the same name in this area
-            existing = supabase.table("boulder").select("id").eq("areaId", AREA_ID).eq("name", boulder["name"]).execute()
+            existing = supabase.table("boulder").select("id").eq("sector_id", SECTOR_ID).eq("name", boulder["name"]).execute()
 
             if existing.data:
                 print(f"Boulder '{boulder['name']}' already exists, skipping...")
@@ -341,9 +352,9 @@ class BoulderImporter:
         print(f"Description: {boulder['description']}")
         print(f"Location: Lat {boulder['latitude']}, Lon {boulder['longitude']}")
         print(f"Height: {boulder['height']}")
+        print(f"Quality: {boulder['quality']}")  # Moved quality before image
         print(f"Image: {boulder['image']}")
-        print(f"Area ID: {boulder['areaId']}")
-        print(f"Quality: {boulder['quality']}")
+        print(f"Sector ID: {boulder['sector_id']}")
         print(f"Type: {boulder['type']}")
         print("=====================\n")
 

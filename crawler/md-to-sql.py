@@ -15,8 +15,8 @@ supabase: Client = create_client(
 )
 
 # Configuration - change these variables to process different files
-FILE_NAME = "Gruta de las Candelas.md"  # Set the file name here
-AREA_ID = "812691b8-25a4-4817-86c8-369979149d14"  # Area ID for Gruta de las Candelas
+FILE_NAME = "San Cayetano.md"  # Set the file name here
+SECTOR_ID = "14210743-d8a6-446b-93c8-5c867943ea40"  # Area ID for San Cayetano
 
 class RouteExtractor:
     def __init__(self, base_path: str = "./climbs/san_luis_potosi/guadalcazar"):
@@ -102,7 +102,7 @@ class RouteExtractor:
                 "length": None,
                 "quality": None,
                 "type": None,
-                "areaId": AREA_ID
+                "sector_id": SECTOR_ID
             }
 
             # Extract route name
@@ -118,7 +118,7 @@ class RouteExtractor:
             # Extract type
             type_match = re.search(r'\*\*Tipo:\*\* (.+?)(?:\s+\*\*|\s*$|\n)', block)
             if type_match:
-                route["type"] = type_match.group(1).strip()
+                route["type"] = type_match.group(1).strip().lower()
 
             # Extract quality
             quality_match = re.search(r'\*\*Calidad:\*\* (\d+)', block)
@@ -161,7 +161,7 @@ class RouteExtractor:
         for route in routes:
             try:
                 # Check if route already exists
-                existing = supabase.table("route").select("id").eq("areaId", AREA_ID).eq("name", route["name"]).execute()
+                existing = supabase.table("route").select("id").eq("sector_id", SECTOR_ID).eq("name", route["name"]).execute()
 
                 if existing.data:
                     print(f"Route '{route['name']}' already exists, skipping...")
