@@ -54,8 +54,7 @@ class BoulderImporter:
                 image_data[(row, col)] = image._data()
 
             # Now read the regular data with pandas
-            df = pd.read_excel(self.excel_file_path, engine='openpyxl')
-
+            df = pd.read_excel(self.excel_file_path, engine='openpyxl', header=None)
 
             # Add an image column if it doesn't exist
             if len(df.columns) <= 7:
