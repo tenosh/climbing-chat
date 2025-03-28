@@ -80,17 +80,13 @@ class BoulderImporter:
             traceback.print_exc()
             raise
 
-    def process_image(self, image_data: Any) -> Optional[str]:
+    def process_image(self, image_data: Any, boulder_id: str) -> Optional[str]:
         """
-        Process an image from various sources:
-        1. URL string
-        2. Local file path string
-        3. Binary data from Excel
+        Process an image from various sources using the boulder_id for the filename.
 
-        The image is:
-        1. Cropped to 4:3 aspect ratio
-        2. Optimized
-        3. Converted to .webp format
+        Args:
+            image_data: The image data (URL, path, or binary)
+            boulder_id: UUID to use for the image filename
 
         Returns the path to the processed image in Supabase storage
         """
@@ -135,8 +131,7 @@ class BoulderImporter:
                 img = img.crop((0, top, width, top + new_height))
 
             # Create a temporary file
-            unique_id = str(uuid.uuid4())
-            temp_path = f"temp_{unique_id}.webp"
+            temp_path = f"temp_{boulder_id}.webp"
 
             # Save as webp with optimization
             quality = 85  # Start with this quality
@@ -190,8 +185,8 @@ class BoulderImporter:
 
             print(f"Saved temporary image to {temp_path}")
 
-            # Upload to Supabase storage
-            storage_path = f"{STORAGE_FOLDER}/{unique_id}.webp"
+            # Upload to Supabase storage with the boulder_id as filename
+            storage_path = f"{STORAGE_FOLDER}/{boulder_id}.webp"
             with open(temp_path, "rb") as f:
                 supabase.storage.from_(BUCKET_NAME).upload(
                     path=storage_path,
@@ -221,13 +216,16 @@ class BoulderImporter:
 
     def prepare_boulder_data(self, row: pd.Series) -> Dict[str, Any]:
         """Convert a row of Excel data to a boulder database record."""
+        # Generate a UUID for this boulder - will be used for both DB ID and image
+        boulder_id = str(uuid.uuid4())
+
         # Process image if available - the image is in the 8th column (index 7)
         image_data = None
         if len(row) > 7:
             image_data = row.iloc[7]
 
         print(f"\nProcessing image for boulder: {row.iloc[0]}")
-        image_url = self.process_image(image_data)
+        image_url = self.process_image(image_data, boulder_id)  # Pass the boulder_id to use for image
 
         # Convert coordinates from DMS to decimal degrees if needed
         lat = row.iloc[3] if len(row) > 3 else None
@@ -248,6 +246,7 @@ class BoulderImporter:
             lon = None
 
         boulder = {
+            "id": boulder_id,  # Set the UUID as the record ID
             "name": row.iloc[0],  # Column 1 (index 0) is the name
             "grade": row.iloc[1] if pd.notna(row.iloc[1]) else DEFAULT_GRADE,  # Use default grade if none provided
             "description": row.iloc[2] if pd.notna(row.iloc[2]) else DEFAULT_DESCRIPTION,  # Column 3 (index 2) is the description
