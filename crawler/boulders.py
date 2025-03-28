@@ -66,7 +66,7 @@ class BoulderImporter:
             # For each row in the dataframe, check if there's an image
             for i, row in df.iterrows():
                 # Excel rows are 1-indexed, but pandas is 0-indexed
-                excel_row = i + 2  # +2 because Excel is 1-indexed and there's usually a header row
+                excel_row = i + 1  # +1 because Excel is 1-indexed (removed the extra +1)
 
                 # Check if there's an image for this cell
                 if (excel_row, 8) in image_data:  # Column 8 in Excel (1-indexed)
