@@ -1360,7 +1360,7 @@ def create_ui():
                     label="Metadata Sources",
                     choices=metadata_options,
                     multiselect=True,
-                    value=["san cayetano", "guadalcazar"],
+                    value=[],
                     info="Select metadata sources for the chunks"
                 )
 
