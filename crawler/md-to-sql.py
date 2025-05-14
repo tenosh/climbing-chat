@@ -15,8 +15,8 @@ supabase: Client = create_client(
 )
 
 # Configuration - change these variables to process different files
-FILE_NAME = "San Cayetano.md"  # Set the file name here
-SECTOR_ID = "14210743-d8a6-446b-93c8-5c867943ea40"  # Area ID for San Cayetano
+FILE_NAME = "Zelda.md"  # Set the file name here
+SECTOR_ID = "0f00208c-8c42-458c-8c65-893f5347eca0"  # Area ID for Zelda
 
 class RouteExtractor:
     def __init__(self, base_path: str = "./climbs/san_luis_potosi/guadalcazar"):
