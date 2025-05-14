@@ -8,7 +8,8 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from google.generativeai import GenerativeModel
+import google.generativeai as genai
 from supabase import create_client, Client
 import gradio as gr
 from collections import defaultdict
@@ -19,8 +20,9 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# Initialize OpenAI and Supabase clients
-openai_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Initialize Google Generative AI client
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+# Initialize Supabase client
 supabase: Client = create_client(
     os.getenv("SUPABASE_URL"),
     os.getenv("SUPABASE_SERVICE_KEY")
@@ -38,28 +40,32 @@ class ProcessedChunk:
     business_id: Optional[str] = None
 
 async def get_embedding(text: str) -> List[float]:
-    """Get embedding vector from OpenAI."""
+    """Get embedding vector from Google."""
     try:
-        response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=text
+        embedding = genai.embed_content(
+            model="models/text-embedding-004",
+            content=text,
+            output_dimensionality=768,
+            task_type="SEMANTIC_SIMILARITY"
         )
-        return response.data[0].embedding
+        return embedding["embedding"]
     except Exception as e:
         logger.error(f"Error getting embedding: {e}")
-        return [0] * 1536  # Return zero vector on error
+        return [0] * 768  # Return zero vector on error (Google embeddings are 768 dimensions)
 
 async def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
     """Get embeddings for multiple texts in a single API call."""
     try:
-        response = await openai_client.embeddings.create(
-            model="text-embedding-3-small",
-            input=texts
-        )
-        return [item.embedding for item in response.data]
+        # Currently, we need to call the embedding API for each text separately
+        # as the batch API might have limitations
+        embeddings = []
+        for text in texts:
+            embedding = await get_embedding(text)
+            embeddings.append(embedding)
+        return embeddings
     except Exception as e:
         logger.error(f"Error getting embeddings batch: {e}")
-        return [[0] * 1536] * len(texts)  # Return zero vectors on error
+        return [[0] * 768] * len(texts)  # Return zero vectors on error
 
 async def get_title_and_summary(chunk: str, chunk_type: str, area_name: str) -> Dict[str, str]:
     """Extract title and summary using LLM."""
@@ -176,15 +182,24 @@ async def get_title_and_summary(chunk: str, chunk_type: str, area_name: str) -> 
         Keep both title and summary concise but informative."""
 
     try:
-        response = await openai_client.chat.completions.create(
-            model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Content:\n{chunk}"}
-            ],
-            response_format={"type": "json_object"}
+        # Create Gemini model
+        model = GenerativeModel("gemini-2.5-flash-preview-04-17")
+
+        # Define prompt for Gemini - it only supports 'user' and 'model' roles
+        prompt = [
+            # Gemini doesn't support system role, include system instructions as user message
+            {"role": "user", "parts": [{"text": f"{system_prompt}\n\nContent:\n{chunk}"}]}
+        ]
+
+        # Make the request to Gemini
+        response = await asyncio.to_thread(
+            model.generate_content,
+            prompt,
+            generation_config={"response_mime_type": "application/json"}
         )
-        result = json.loads(response.choices[0].message.content)
+
+        # Parse the JSON response
+        result = json.loads(response.text)
 
         # For boulder groups, we want to ensure the title follows our format
         if chunk_type.startswith("boulder_group"):
