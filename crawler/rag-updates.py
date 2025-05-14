@@ -33,8 +33,9 @@ class ProcessedChunk:
     content: str
     metadata: Dict[str, Any]
     embedding: List[float]
-    place_id: str
-    sector_id: str
+    place_id: Optional[str] = None
+    sector_id: Optional[str] = None
+    business_id: Optional[str] = None
 
 async def get_embedding(text: str) -> List[float]:
     """Get embedding vector from OpenAI."""
@@ -129,6 +130,40 @@ async def get_title_and_summary(chunk: str, chunk_type: str, area_name: str) -> 
 
             All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
             Keep the summary concise but informative."""
+    elif chunk_type == "business_info":
+        system_prompt = f"""You are an AI that extracts titles and summaries from business information.
+        Return a JSON object with 'title' and 'summary' keys.
+        For the title: Use the business name and add a descriptive phrase about its type or main service.
+        For the summary: Create a concise summary focusing on:
+        - What type of business this is (accommodation, restaurant, market, gas station, etc.)
+        - Main services or products offered
+        - Key features or amenities (WiFi, delivery, etc.)
+        - Location or relevance to visitors/climbers if mentioned
+
+        Examples of good titles:
+        - "Hotel Montaña - Alojamiento cercano a zonas de escalada"
+        - "Restaurante El Peñón - Comida local para escaladores"
+        - "Mercado San Cayetano - Provisiones para tu aventura"
+        - "Gasolinera Roca - Combustible y servicios básicos"
+
+        All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+        Keep both title and summary concise but informative."""
+    elif chunk_type == "business_menu":
+        system_prompt = f"""You are an AI that extracts titles and summaries from restaurant menus.
+        Return a JSON object with 'title' and 'summary' keys.
+        For the title: Use "Menú de [Business Name]" with a descriptive subtitle about the cuisine type.
+        For the summary: Create a concise summary focusing on:
+        - Type of cuisine or food style
+        - Highlight of popular or specialty dishes
+        - Price range or value proposition if mentioned
+        - Special dietary options (vegetarian, vegan, etc.) if available
+
+        Examples of good titles:
+        - "Menú de La Cumbre - Cocina tradicional de montaña"
+        - "Menú de Café Escalada - Opciones rápidas para escaladores"
+
+        All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+        Keep both title and summary concise but informative."""
     else:  # chunk_type.startswith("route_group")
         system_prompt = f"""You are an AI that extracts titles and summaries from collections of climbing routes.
         Return a JSON object with 'title' and 'summary' keys.
@@ -192,7 +227,8 @@ async def insert_chunk(chunk: ProcessedChunk):
             "metadata": chunk.metadata,
             "embedding": chunk.embedding,
             "place_id": chunk.place_id,
-            "sector_id": chunk.sector_id
+            "sector_id": chunk.sector_id,
+            "business_id": chunk.business_id
         }
 
         result = supabase.table("rag_data").insert(data).execute()
@@ -213,7 +249,8 @@ async def insert_chunks_batch(chunks: List[ProcessedChunk]):
                 "metadata": chunk.metadata,
                 "embedding": chunk.embedding,
                 "place_id": chunk.place_id,
-                "sector_id": chunk.sector_id
+                "sector_id": chunk.sector_id,
+                "business_id": chunk.business_id
             }
             for chunk in chunks
         ]
@@ -229,6 +266,8 @@ async def insert_chunks_batch(chunks: List[ProcessedChunk]):
 async def delete_existing_chunks(sector_id: str, source: List[str]):
     """Delete existing chunks for this specific sector before inserting new ones."""
     try:
+        # Only delete records where sector_id matches the specified sector_id
+        # This ensures we don't delete records that might not have a sector_id at all
         result = supabase.table("rag_data").delete().eq("sector_id", sector_id).execute()
         logger.info(f"Deleted existing chunks for sector_id: {sector_id}")
         return result
@@ -657,6 +696,391 @@ async def get_sector_details(sector_id: str) -> Dict:
         logger.error(f"Error getting sector details: {e}")
         return None
 
+async def get_all_businesses():
+    """Get list of all businesses for UI dropdown."""
+    try:
+        response = supabase.table("business").select("id, name").order("name").execute()
+        logger.info(f"Retrieved {len(response.data)} businesses from database")
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting businesses: {e}")
+        return []
+
+async def get_business_data(business_id: str) -> Dict:
+    """Get business data from Supabase."""
+    try:
+        response = supabase.table("business").select("*").eq("id", business_id).execute()
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"Error getting business data: {e}")
+        return None
+
+async def delete_existing_business_chunks(business_id: str, source: List[str]):
+    """Delete existing chunks for this specific business before inserting new ones."""
+    try:
+        # Only delete records where business_id matches the specified business_id
+        # This ensures we don't delete records that might not have a business_id at all
+        result = supabase.table("rag_data").delete().eq("business_id", business_id).execute()
+        logger.info(f"Deleted existing chunks for business_id: {business_id}")
+        return result
+    except Exception as e:
+        logger.error(f"Error deleting existing business chunks: {e}")
+        return None
+
+async def process_business_info(business_data: Dict, metadata_sources: List[str]) -> ProcessedChunk:
+    """Process business information into a structured chunk."""
+    # Combine business information into a structured format
+    content = f"# {business_data['name']}\n\n"
+
+    # Get business type for better context
+    business_type_list = []
+    if business_data.get('type'):
+        # Handle type if it's a JSON array
+        business_types = business_data['type']
+        if isinstance(business_types, str):
+            try:
+                business_types = json.loads(business_types)
+                business_type_list = business_types
+            except Exception as e:
+                logger.error(f"Error parsing business type: {e}")
+                business_types = []
+        else:
+            business_type_list = business_types
+
+        if business_types:
+            content += f"## Tipo de Negocio\n{', '.join(business_types)}\n\n"
+
+    if business_data.get('description'):
+        content += f"## Descripción\n{business_data['description']}\n\n"
+
+    if business_data.get('phone'):
+        content += f"## Teléfono\n{business_data['phone']}\n\n"
+
+    if business_data.get('hours'):
+        hours_data = business_data['hours']
+        if isinstance(hours_data, str):
+            try:
+                hours_data = json.loads(hours_data)
+            except Exception as e:
+                logger.error(f"Error parsing business hours: {e}")
+                hours_data = {}
+
+        if hours_data:
+            content += "## Horario\n"
+            days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+            day_names = {
+                "monday": "Lunes",
+                "tuesday": "Martes",
+                "wednesday": "Miércoles",
+                "thursday": "Jueves",
+                "friday": "Viernes",
+                "saturday": "Sábado",
+                "sunday": "Domingo"
+            }
+
+            for day in days:
+                if day in hours_data and hours_data[day]:
+                    day_schedule = hours_data[day]
+                    if isinstance(day_schedule, list) and day_schedule:
+                        slots = []
+                        for slot in day_schedule:
+                            if 'open' in slot and 'close' in slot:
+                                slots.append(f"{slot['open']} - {slot['close']}")
+                        if slots:
+                            content += f"- {day_names[day]}: {', '.join(slots)}\n"
+            content += "\n"
+
+    # Add delivery and wifi information
+    features = []
+    if business_data.get('has_delivery') is True:
+        features.append("Servicio a domicilio disponible")
+    if business_data.get('has_free_wifi') is True:
+        features.append("WiFi gratuito disponible")
+
+    if features:
+        content += f"## Características\n"
+        for feature in features:
+            content += f"- {feature}\n"
+        content += "\n"
+
+    # Add social media information
+    social_media = []
+    if business_data.get('instagram'):
+        social_media.append(f"Instagram: {business_data['instagram']}")
+    if business_data.get('facebook'):
+        social_media.append(f"Facebook: {business_data['facebook']}")
+
+    if social_media:
+        content += f"## Redes Sociales\n"
+        for social in social_media:
+            content += f"- {social}\n"
+        content += "\n"
+
+    # Process menu if available
+    if business_data.get('menu'):
+        menu_data = business_data['menu']
+        if isinstance(menu_data, str):
+            try:
+                menu_data = json.loads(menu_data)
+            except Exception as e:
+                logger.error(f"Error parsing menu data: {e}")
+                menu_data = {}
+
+        if menu_data and isinstance(menu_data, list):
+            content += "## Menú\n"
+            for category in menu_data:
+                if 'name' in category:
+                    content += f"### {category['name']}\n"
+                    if 'items' in category and isinstance(category['items'], list):
+                        for item in category['items']:
+                            item_info = []
+                            if 'name' in item:
+                                item_info.append(f"**{item['name']}**")
+                            if 'price' in item:
+                                item_info.append(f"${item['price']}")
+                            if 'description' in item:
+                                item_info.append(f"{item['description']}")
+
+                            if item_info:
+                                content += f"- {' - '.join(item_info)}\n"
+                    content += "\n"
+
+    # Get title and summary using enhanced prompts for businesses
+    extracted = await get_title_and_summary(content, "business_info", business_data['name'])
+
+    # Get embedding
+    embedding = await get_embedding(content)
+
+    # Create metadata
+    metadata = {
+        "source": metadata_sources,
+        "source_searchable": "|".join(metadata_sources),  # For text search optimization
+        "type": "business_info",
+        "business_type": business_type_list,
+        "chunk_size": len(content),
+        "crawled_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return ProcessedChunk(
+        title=extracted['title'],
+        summary=extracted['summary'],
+        content=content,
+        metadata=metadata,
+        embedding=embedding,
+        place_id=None,  # Businesses don't have a place_id
+        sector_id=None,  # Businesses don't have a sector_id
+        business_id=business_data['id']  # Add business_id
+    )
+
+async def process_business_menu(business_data: Dict, metadata_sources: List[str]) -> Optional[ProcessedChunk]:
+    """Process business menu into a separate chunk if menu exists and is substantial."""
+    if not business_data.get('menu'):
+        return None
+
+    menu_data = business_data['menu']
+    if isinstance(menu_data, str):
+        try:
+            menu_data = json.loads(menu_data)
+        except Exception as e:
+            logger.error(f"Error parsing menu data: {e}")
+            return None
+
+    if not menu_data or not isinstance(menu_data, list) or len(menu_data) == 0:
+        return None
+
+    # Create content specifically for the menu
+    content = f"# Menú de {business_data['name']}\n\n"
+
+    for category in menu_data:
+        if 'name' in category:
+            content += f"## {category['name']}\n"
+            if 'items' in category and isinstance(category['items'], list):
+                for item in category['items']:
+                    item_info = []
+                    if 'name' in item:
+                        item_info.append(f"**{item['name']}**")
+                    if 'price' in item:
+                        item_info.append(f"${item['price']}")
+                    if 'description' in item:
+                        item_info.append(f"{item['description']}")
+
+                    if item_info:
+                        content += f"- {' - '.join(item_info)}\n"
+            content += "\n"
+
+    # Only create a menu chunk if there's substantial content
+    if len(content) < 100:  # Arbitrary threshold
+        return None
+
+    # Get title and summary using enhanced prompts for business menus
+    extracted = await get_title_and_summary(content, "business_menu", business_data['name'])
+
+    # Get embedding
+    embedding = await get_embedding(content)
+
+    # Create metadata
+    metadata = {
+        "source": metadata_sources,
+        "source_searchable": "|".join(metadata_sources),  # For text search optimization
+        "type": "business_menu",
+        "business_type": business_data.get('type', []),
+        "chunk_size": len(content),
+        "crawled_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    return ProcessedChunk(
+        title=extracted['title'],
+        summary=extracted['summary'],
+        content=content,
+        metadata=metadata,
+        embedding=embedding,
+        place_id=None,  # Businesses don't have a place_id
+        sector_id=None,  # Businesses don't have a sector_id
+        business_id=business_data['id']  # Add business_id
+    )
+
+async def process_business_for_rag(business_data: Dict, metadata_sources: List[str]) -> List[ProcessedChunk]:
+    """Process business data for RAG."""
+    chunks = []
+
+    # 1. Main business info chunk
+    business_chunk = await process_business_info(business_data, metadata_sources)
+    chunks.append(business_chunk)
+
+    # 2. Menu chunk (if applicable)
+    menu_chunk = await process_business_menu(business_data, metadata_sources)
+    if menu_chunk:
+        chunks.append(menu_chunk)
+
+    return chunks
+
+async def generate_business_chunks_preview(business_id: str, metadata_sources: List[str]):
+    """Generate chunks preview for a business without inserting them into the database."""
+    # Get business data
+    business_data = await get_business_data(business_id)
+    if not business_data:
+        logger.error(f"Could not find business with id: {business_id}")
+        return None, f"Error: Could not find business with id: {business_id}"
+
+    # Process business for RAG
+    chunks = await process_business_for_rag(business_data, metadata_sources)
+
+    return chunks, f"Generated {len(chunks)} chunks for preview. Review them before inserting to the database."
+
+async def insert_business_chunks_to_db(chunks: List[ProcessedChunk], metadata_sources: List[str]):
+    """Insert the previewed business chunks into the database."""
+    if not chunks:
+        return "No chunks to insert."
+
+    # Delete existing chunks for this business_id
+    business_id = chunks[0].business_id
+    await delete_existing_business_chunks(business_id, metadata_sources)
+
+    # Insert all chunks in batch
+    result = await insert_chunks_batch(chunks)
+
+    return f"Successfully inserted {len(chunks)} chunks into the database."
+
+async def process_business(business_id: str, metadata_sources: List[str]):
+    """Process a business and all its data."""
+    # Get business data
+    business_data = await get_business_data(business_id)
+    if not business_data:
+        logger.error(f"Could not find business with id: {business_id}")
+        return f"Error: Could not find business with id: {business_id}"
+
+    # Delete existing chunks for this business_id
+    await delete_existing_business_chunks(business_id, metadata_sources)
+
+    # Process business for RAG
+    chunks = await process_business_for_rag(business_data, metadata_sources)
+
+    # Insert all chunks in batch
+    await insert_chunks_batch(chunks)
+
+    return f"Successfully processed business {business_data['name']} into {len(chunks)} optimized chunks"
+
+async def process_all_businesses(metadata_sources: List[str]):
+    """Process all businesses in the database for RAG."""
+    try:
+        # Get all businesses
+        response = supabase.table("business").select("id").execute()
+        business_ids = [b['id'] for b in response.data]
+
+        logger.info(f"Processing {len(business_ids)} businesses in batch")
+
+        # Process each business
+        all_chunks = []
+        for business_id in business_ids:
+            business_data = await get_business_data(business_id)
+            if business_data:
+                chunks = await process_business_for_rag(business_data, metadata_sources)
+                all_chunks.extend(chunks)
+                logger.info(f"Generated {len(chunks)} chunks for business: {business_data['name']}")
+
+        # Delete existing chunks for all businesses first
+        # This is a risky operation, so we'll confirm we have generated chunks first
+        if all_chunks:
+            # Use a safer approach - only delete records that have a business_id
+            # This preserves any other RAG data that doesn't have a business_id (like sector data)
+            # First get the distinct business_ids from the data we're about to insert
+            business_ids_to_process = list(set(chunk.business_id for chunk in all_chunks if chunk.business_id))
+
+            # Delete only the business chunks for these specific business_ids
+            for business_id in business_ids_to_process:
+                result = supabase.table("rag_data").delete().eq("business_id", business_id).execute()
+                logger.info(f"Deleted existing chunks for business_id: {business_id}")
+
+            # Insert all chunks in batch
+            result = await insert_chunks_batch(all_chunks)
+            logger.info(f"Inserted {len(all_chunks)} chunks for all businesses")
+
+            return f"Successfully processed {len(business_ids)} businesses into {len(all_chunks)} optimized chunks"
+        else:
+            return "No chunks were generated. Check if there are valid businesses in the database."
+
+    except Exception as e:
+        logger.error(f"Error processing all businesses: {e}")
+        return f"Error processing all businesses: {str(e)}"
+
+async def generate_all_businesses_preview(metadata_sources: List[str]):
+    """Generate preview for all businesses without inserting them."""
+    try:
+        # Get all businesses
+        response = supabase.table("business").select("id").execute()
+        business_ids = [b['id'] for b in response.data]
+
+        logger.info(f"Generating preview for {len(business_ids)} businesses")
+
+        # Process each business
+        all_chunks = []
+        for business_id in business_ids:
+            business_data = await get_business_data(business_id)
+            if business_data:
+                chunks = await process_business_for_rag(business_data, metadata_sources)
+                all_chunks.extend(chunks)
+                logger.info(f"Generated {len(chunks)} chunks for business: {business_data['name']}")
+
+        return all_chunks, f"Generated {len(all_chunks)} chunks for {len(business_ids)} businesses. Review them before inserting to the database."
+
+    except Exception as e:
+        logger.error(f"Error generating preview for all businesses: {e}")
+        return None, f"Error generating preview for all businesses: {str(e)}"
+
+def get_initial_businesses():
+    """Get initial list of businesses with 'All Businesses' option."""
+    try:
+        response = supabase.table("business").select("id, name").order("name").execute()
+        # Add an option for processing all businesses
+        choices = [("All Businesses", "all")] + [(b['name'], b['id']) for b in response.data]
+        logger.info(f"Initial business dropdown populated with {len(choices)} choices")
+        return choices
+    except Exception as e:
+        logger.error(f"Error getting initial businesses: {e}")
+        return [("All Businesses", "all")]  # At least return the "all" option
+
 def create_ui():
     """Create Gradio UI for sector selection and processing."""
     # Define metadata source options
@@ -667,25 +1091,28 @@ def create_ui():
         "san cayetano",
         "zelda",
         "comadres",
-        "guadalcazar"
+        "guadalcazar",
+        "accommodation"
     ]
 
-    # Create a list to store generated chunks for preview
-    generated_chunks = []
+    # Create lists to store generated chunks for preview
+    generated_sector_chunks = []
+    generated_business_chunks = []
     current_sector_id = None
+    current_business_id = None
 
-    async def on_generate_preview(sector_id, metadata_sources):
+    async def on_generate_sector_preview(sector_id, metadata_sources):
         # Process selected sector with selected metadata sources to generate preview
         if not metadata_sources:
             return "Error: Please select at least one metadata source", None, [], False
 
-        nonlocal generated_chunks
+        nonlocal generated_sector_chunks
         nonlocal current_sector_id
 
         chunks, message = await generate_chunks_preview(sector_id, metadata_sources)
 
         if chunks:
-            generated_chunks = chunks
+            generated_sector_chunks = chunks
             # Get sector_id for later use during insertion
             current_sector_id = sector_id
 
@@ -704,28 +1131,118 @@ def create_ui():
         else:
             return message, gr.update(visible=False), [], False
 
-    async def on_insert_to_db(metadata_sources):
+    async def on_generate_business_preview(business_id, metadata_sources):
+        # Process selected business(es) with selected metadata sources to generate preview
+        if not metadata_sources:
+            return "Error: Please select at least one metadata source", None, [], False
+
+        nonlocal generated_business_chunks
+        nonlocal current_business_id
+
+        # Handle "All Businesses" option
+        if business_id == "all":
+            chunks, message = await generate_all_businesses_preview(metadata_sources)
+        else:
+            chunks, message = await generate_business_chunks_preview(business_id, metadata_sources)
+
+        if chunks:
+            generated_business_chunks = chunks
+            # Store the business_id or "all" for later use during insertion
+            current_business_id = business_id
+
+            # Prepare data for the preview table
+            preview_data = []
+            # For all businesses preview, limit the display to avoid overloading the UI
+            display_limit = 100 if business_id == "all" else len(chunks)
+
+            for i, chunk in enumerate(chunks[:display_limit]):
+                preview_data.append([
+                    i+1,
+                    chunk.title,
+                    chunk.summary,
+                    chunk.metadata.get('type', 'Unknown'),
+                    len(chunk.content)
+                ])
+
+            # Add a message about limiting preview if necessary
+            if business_id == "all" and len(chunks) > display_limit:
+                message += f" (Showing first {display_limit} of {len(chunks)} chunks in preview)"
+
+            return message, gr.update(visible=True), preview_data, True
+        else:
+            return message, gr.update(visible=False), [], False
+
+    async def on_insert_sector_to_db(metadata_sources):
         # Insert the previewed chunks into the database
-        nonlocal generated_chunks
+        nonlocal generated_sector_chunks
         nonlocal current_sector_id
 
-        if not generated_chunks or not current_sector_id:
+        if not generated_sector_chunks or not current_sector_id:
             return "No chunks to insert. Please generate a preview first."
 
         # Get place_id for UI display purposes
-        place_id = generated_chunks[0].place_id if generated_chunks else None
+        place_id = generated_sector_chunks[0].place_id if generated_sector_chunks else None
 
-        result = await insert_chunks_to_db(generated_chunks, place_id, metadata_sources)
+        result = await insert_chunks_to_db(generated_sector_chunks, place_id, metadata_sources)
 
         # Clear the chunks after insertion
-        generated_chunks = []
+        generated_sector_chunks = []
 
         return result
+
+    async def on_insert_business_to_db(metadata_sources):
+        # Insert the previewed business chunks into the database
+        nonlocal generated_business_chunks
+        nonlocal current_business_id
+
+        if not generated_business_chunks:
+            return "No chunks to insert. Please generate a preview first."
+
+        # Special handling for "all" businesses case
+        if current_business_id == "all":
+            # Confirm we have chunks before this potentially destructive operation
+            if generated_business_chunks:
+                # Use a safer approach - only delete records that have a business_id
+                # This preserves any other RAG data that doesn't have a business_id (like sector data)
+                # First get the distinct business_ids from the data we're about to insert
+                business_ids_to_process = list(set(chunk.business_id for chunk in generated_business_chunks if chunk.business_id))
+
+                # Delete only the business chunks for these specific business_ids
+                for business_id in business_ids_to_process:
+                    result = supabase.table("rag_data").delete().eq("business_id", business_id).execute()
+                    logger.info(f"Deleted existing chunks for business_id: {business_id}")
+
+                # Insert all chunks in batch
+                result = await insert_chunks_batch(generated_business_chunks)
+
+                count_inserted = len(generated_business_chunks)
+                logger.info(f"Inserted {count_inserted} chunks for all businesses")
+
+                # Clear the chunks after insertion
+                generated_business_chunks = []
+
+                return f"Successfully inserted {count_inserted} chunks for all businesses"
+        else:
+            # Regular single business processing
+            business_id = generated_business_chunks[0].business_id
+            result = await insert_business_chunks_to_db(generated_business_chunks, metadata_sources)
+
+            # Clear the chunks after insertion
+            generated_business_chunks = []
+
+            return result
 
     async def update_sector_dropdown():
         sectors = await get_all_sectors()
         choices = [(s['name'], s['id']) for s in sectors]
         logger.info(f"Updating dropdown with {len(choices)} sector choices")
+        return choices
+
+    async def update_business_dropdown():
+        businesses = await get_all_businesses()
+        # Add an option for processing all businesses
+        choices = [("All Businesses", "all")] + [(b['name'], b['id']) for b in businesses]
+        logger.info(f"Updating dropdown with {len(choices)} business choices")
         return choices
 
     async def update_climbing_type(sector_id):
@@ -752,89 +1269,190 @@ def create_ui():
             logger.error(f"Error parsing climbing type: {e}")
             return "Tipo: Error"
 
-    # Get sectors synchronously for initial dropdown population
+    async def update_business_type(business_id):
+        """Update the business type tag when a business is selected."""
+        if not business_id:
+            return "N/A"
+
+        # Handle the "All Businesses" option
+        if business_id == "all":
+            return "Procesando todos los negocios"
+
+        business_data = await get_business_data(business_id)
+        if not business_data or not business_data.get('type'):
+            return "Tipo: No especificado"
+
+        # business type is stored as a JSON array
+        try:
+            business_types = business_data['type']
+            if isinstance(business_types, str):
+                business_types = json.loads(business_types)
+
+            if not business_types:
+                return "Tipo: No especificado"
+
+            types_str = ", ".join(business_types)
+            return f"Tipo: {types_str}"
+        except Exception as e:
+            logger.error(f"Error parsing business type: {e}")
+            return "Tipo: Error"
+
+    # Get sectors and businesses synchronously for initial dropdown population
     def get_initial_sectors():
         response = supabase.table("sector").select("id, name").order("name").execute()
         choices = [(s['name'], s['id']) for s in response.data]
-        logger.info(f"Initial dropdown populated with {len(choices)} sector choices")
+        logger.info(f"Initial sector dropdown populated with {len(choices)} choices")
         return choices
 
+    # Get initial businesses with the "All Businesses" option
     initial_sectors = get_initial_sectors()
+    initial_businesses = get_initial_businesses()
 
     with gr.Blocks(title="RAG Data Update Tool") as app:
         gr.Markdown("# RAG Data Update Tool")
-        gr.Markdown("Select a climbing sector to process for RAG data")
 
-        # Load sectors on startup with pre-fetched data
-        sector_dropdown = gr.Dropdown(
-            label="Select Sector",
-            choices=initial_sectors,
-            info="Choose a climbing sector to process",
-            scale=1
-        )
+        with gr.Tabs():
+            with gr.TabItem("Sector Data"):
+                gr.Markdown("## Select a climbing sector to process for RAG data")
 
-        # Add climbing type tag
-        climbing_type_tag = gr.Textbox(
-            label="Climbing Type",
-            value="Tipo: No seleccionado",
-            interactive=False
-        )
+                # Load sectors on startup with pre-fetched data
+                sector_dropdown = gr.Dropdown(
+                    label="Select Sector",
+                    choices=initial_sectors,
+                    info="Choose a climbing sector to process",
+                    scale=1
+                )
 
-        # Update climbing type when sector selection changes
-        sector_dropdown.change(
-            fn=update_climbing_type,
-            inputs=[sector_dropdown],
-            outputs=[climbing_type_tag]
-        )
+                # Add climbing type tag
+                climbing_type_tag = gr.Textbox(
+                    label="Climbing Type",
+                    value="Tipo: No seleccionado",
+                    interactive=False
+                )
 
-        refresh_btn = gr.Button("Refresh Sector List")
-        refresh_btn.click(fn=update_sector_dropdown, outputs=[sector_dropdown])
+                # Update climbing type when sector selection changes
+                sector_dropdown.change(
+                    fn=update_climbing_type,
+                    inputs=[sector_dropdown],
+                    outputs=[climbing_type_tag]
+                )
 
-        # Replace text input with multiselect dropdown
-        metadata_sources = gr.Dropdown(
-            label="Metadata Sources",
-            choices=metadata_options,
-            multiselect=True,
-            value=["san cayetano", "guadalcazar"],
-            info="Select metadata sources for the chunks"
-        )
+                refresh_sector_btn = gr.Button("Refresh Sector List")
+                refresh_sector_btn.click(fn=update_sector_dropdown, outputs=[sector_dropdown])
 
-        # Preview button instead of direct processing
-        preview_btn = gr.Button("Generate Preview")
-        preview_result = gr.Textbox(label="Preview Result", interactive=False)
+                # Replace text input with multiselect dropdown
+                sector_metadata_sources = gr.Dropdown(
+                    label="Metadata Sources",
+                    choices=metadata_options,
+                    multiselect=True,
+                    value=["san cayetano", "guadalcazar"],
+                    info="Select metadata sources for the chunks"
+                )
 
-        # Preview table container that is initially hidden
-        with gr.Column(visible=False) as preview_container:
-            gr.Markdown("### Generated Chunks Preview")
-            preview_table = gr.Dataframe(
-                headers=["#", "Title", "Summary", "Type", "Content Length"],
-                datatype=["number", "str", "str", "str", "number"],
-                label="Chunks Preview"
-            )
+                # Preview button instead of direct processing
+                sector_preview_btn = gr.Button("Generate Preview")
+                sector_preview_result = gr.Textbox(label="Preview Result", interactive=False)
 
-            # Insert button only visible after preview is generated
-            insert_btn = gr.Button("Insert to Database", variant="primary")
-            insert_result = gr.Textbox(label="Insert Result", interactive=False)
+                # Preview table container that is initially hidden
+                with gr.Column(visible=False) as sector_preview_container:
+                    gr.Markdown("### Generated Chunks Preview")
+                    sector_preview_table = gr.Dataframe(
+                        headers=["#", "Title", "Summary", "Type", "Content Length"],
+                        datatype=["number", "str", "str", "str", "number"],
+                        label="Chunks Preview"
+                    )
 
-        # Connect preview button to generate preview function
-        preview_btn.click(
-            fn=on_generate_preview,
-            inputs=[sector_dropdown, metadata_sources],
-            outputs=[preview_result, preview_container, preview_table, insert_btn]
-        )
+                    # Insert button only visible after preview is generated
+                    sector_insert_btn = gr.Button("Insert to Database", variant="primary")
+                    sector_insert_result = gr.Textbox(label="Insert Result", interactive=False)
 
-        # Connect insert button to insert function
-        insert_btn.click(
-            fn=on_insert_to_db,
-            inputs=[metadata_sources],
-            outputs=[insert_result]
-        )
+                # Connect preview button to generate preview function
+                sector_preview_btn.click(
+                    fn=on_generate_sector_preview,
+                    inputs=[sector_dropdown, sector_metadata_sources],
+                    outputs=[sector_preview_result, sector_preview_container, sector_preview_table, sector_insert_btn]
+                )
+
+                # Connect insert button to insert function
+                sector_insert_btn.click(
+                    fn=on_insert_sector_to_db,
+                    inputs=[sector_metadata_sources],
+                    outputs=[sector_insert_result]
+                )
+
+            with gr.TabItem("Business Data"):
+                gr.Markdown("## Select a business to process for RAG data")
+
+                # Load businesses on startup with pre-fetched data
+                business_dropdown = gr.Dropdown(
+                    label="Select Business",
+                    choices=initial_businesses,
+                    info="Choose a business to process",
+                    scale=1
+                )
+
+                # Add business type tag
+                business_type_tag = gr.Textbox(
+                    label="Business Type",
+                    value="Tipo: No seleccionado",
+                    interactive=False
+                )
+
+                # Update business type when business selection changes
+                business_dropdown.change(
+                    fn=update_business_type,
+                    inputs=[business_dropdown],
+                    outputs=[business_type_tag]
+                )
+
+                refresh_business_btn = gr.Button("Refresh Business List")
+                refresh_business_btn.click(fn=update_business_dropdown, outputs=[business_dropdown])
+
+                # Metadata sources for business
+                business_metadata_sources = gr.Dropdown(
+                    label="Metadata Sources",
+                    choices=metadata_options,
+                    multiselect=True,
+                    value=["accommodation"],  # Default to "accommodation" for business data
+                    info="Select metadata sources for the chunks"
+                )
+
+                # Preview button for business data
+                business_preview_btn = gr.Button("Generate Preview")
+                business_preview_result = gr.Textbox(label="Preview Result", interactive=False)
+
+                # Preview table container for business data
+                with gr.Column(visible=False) as business_preview_container:
+                    gr.Markdown("### Generated Business Chunks Preview")
+                    business_preview_table = gr.Dataframe(
+                        headers=["#", "Title", "Summary", "Type", "Content Length"],
+                        datatype=["number", "str", "str", "str", "number"],
+                        label="Chunks Preview"
+                    )
+
+                    # Insert button only visible after preview is generated
+                    business_insert_btn = gr.Button("Insert to Database", variant="primary")
+                    business_insert_result = gr.Textbox(label="Insert Result", interactive=False)
+
+                # Connect preview button to generate preview function for business
+                business_preview_btn.click(
+                    fn=on_generate_business_preview,
+                    inputs=[business_dropdown, business_metadata_sources],
+                    outputs=[business_preview_result, business_preview_container, business_preview_table, business_insert_btn]
+                )
+
+                # Connect insert button to insert function for business
+                business_insert_btn.click(
+                    fn=on_insert_business_to_db,
+                    inputs=[business_metadata_sources],
+                    outputs=[business_insert_result]
+                )
 
     return app
 
 async def main():
     # Add a description to logging
-    logger.info("Starting RAG data update tool with boulder support")
+    logger.info("Starting RAG data update tool with business and boulder support")
     app = create_ui()
     app.launch(share=False, inbrowser=True)
 
