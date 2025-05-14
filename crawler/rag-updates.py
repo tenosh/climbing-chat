@@ -85,7 +85,51 @@ async def get_title_and_summary(chunk: str, chunk_type: str, area_name: str) -> 
         - Length and number of bolts if available
         All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
         Keep both title and summary concise but informative."""
-    else:  # chunk_type == "route_group" or "routes_collection"
+    elif chunk_type.startswith("boulder_group"):
+        # Extract the grade from the chunk_type
+        grade_key = chunk_type.split('_')[-1]
+
+        # Set specific title and special prompts for specific grades
+        if grade_key == "desconocido":
+            title = f"Bloques de {area_name} - Grado Desconocido"
+            system_prompt = f"""You are an AI that extracts summaries from boulder climbing data.
+            Return a JSON object with 'title' and 'summary' keys.
+            For the title: Use '{title}'
+            For the summary: Create a concise summary of the boulder problem(s), emphasizing that:
+            - These boulders have unknown grades that need to be determined
+            - Climbers are invited to try these problems and help establish their grades
+            - Include any style characteristics (sloper, crimpy, etc.) if mentioned
+            - Mention any notable features or special conditions
+
+            All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+            Keep the summary concise but informative, and be sure to include the invitation for climbers to determine the grades."""
+        elif grade_key == "proyecto-abierto":
+            title = f"Bloques de {area_name} - Proyectos Abiertos"
+            system_prompt = f"""You are an AI that extracts summaries from boulder climbing data.
+            Return a JSON object with 'title' and 'summary' keys.
+            For the title: Use '{title}'
+            For the summary: Create a concise summary of the boulder problem(s), emphasizing that:
+            - These are new open projects that haven't been completed yet
+            - Climbers are invited to attempt these problems and potentially make first ascents
+            - Include any style characteristics (sloper, crimpy, etc.) if mentioned
+            - Mention any notable features or special conditions
+
+            All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+            Keep the summary concise but informative, and be sure to include the invitation for climbers to try these open projects."""
+        else:
+            title = f"Bloques de {area_name} - Grado {grade_key}"
+            system_prompt = f"""You are an AI that extracts summaries from boulder climbing data.
+            Return a JSON object with 'title' and 'summary' keys.
+            For the title: Use '{title}'
+            For the summary: Create a concise summary of the boulder problem(s), including:
+            - Grade and difficulty level
+            - Style characteristics (sloper, crimpy, etc.)
+            - Notable features like "top quality" or "highball"
+            - Special conditions (sun/shade, approach, etc.)
+
+            All data is in Spanish. IMPORTANT: Return the title and summary in Spanish.
+            Keep the summary concise but informative."""
+    else:  # chunk_type.startswith("route_group")
         system_prompt = f"""You are an AI that extracts titles and summaries from collections of climbing routes.
         Return a JSON object with 'title' and 'summary' keys.
         For the title: Use 'Rutas de grado {chunk_type.split('_')[-1]} en {area_name}'
@@ -105,9 +149,37 @@ async def get_title_and_summary(chunk: str, chunk_type: str, area_name: str) -> 
             ],
             response_format={"type": "json_object"}
         )
-        return json.loads(response.choices[0].message.content)
+        result = json.loads(response.choices[0].message.content)
+
+        # For boulder groups, we want to ensure the title follows our format
+        if chunk_type.startswith("boulder_group"):
+            grade_key = chunk_type.split('_')[-1]
+            if grade_key == "desconocido":
+                result["title"] = f"Bloques de {area_name} - Grado Desconocido"
+            elif grade_key == "proyecto-abierto":
+                result["title"] = f"Bloques de {area_name} - Proyectos Abiertos"
+            else:
+                result["title"] = f"Bloques de {area_name} - Grado {grade_key}"
+
+        return result
     except Exception as e:
         logger.error(f"Error getting title and summary: {e}")
+
+        # If there's an error but we have a boulder group, return a default title
+        if chunk_type.startswith("boulder_group"):
+            grade_key = chunk_type.split('_')[-1]
+            if grade_key == "desconocido":
+                title = f"Bloques de {area_name} - Grado Desconocido"
+                summary = "Bloques con grado por determinar. Se invita a los escaladores a intentar estos problemas y ayudar a establecer sus grados."
+            elif grade_key == "proyecto-abierto":
+                title = f"Bloques de {area_name} - Proyectos Abiertos"
+                summary = "Proyectos abiertos que aún no han sido completados. Se invita a los escaladores a intentar estos problemas y potencialmente hacer primeras ascensiones."
+            else:
+                title = f"Bloques de {area_name} - Grado {grade_key}"
+                summary = f"Información sobre bloques de dificultad {grade_key} en el sector {area_name}."
+
+            return {"title": title, "summary": summary}
+
         return {"title": "Error procesando título", "summary": "Error procesando resumen"}
 
 async def insert_chunk(chunk: ProcessedChunk):
@@ -184,6 +256,54 @@ async def get_routes_for_sector(sector_id: str) -> List[Dict]:
         logger.error(f"Error getting routes: {e}")
         return []
 
+async def get_boulders_for_sector(sector_id: str) -> List[Dict]:
+    """Get all boulders for a sector from Supabase."""
+    try:
+        response = supabase.table("boulder").select("*").eq("sector_id", sector_id).execute()
+        return response.data
+    except Exception as e:
+        logger.error(f"Error getting boulders: {e}")
+        return []
+
+def translate_boulder_style(style_list):
+    """Translate boulder style options from English to Spanish."""
+    # Map for translating style options
+    style_map = {
+        "Flat approach": "Aproximación plana",
+        "Uphill approach": "Aproximación en subida",
+        "Steep uphill approach": "Aproximación en subida pronunciada",
+        "Downhill approach": "Aproximación en bajada",
+        "Morning sun": "Sol de mañana",
+        "Afternoon sun": "Sol de tarde",
+        "Tree-filtered sun (am)": "Sol filtrado por árboles (mañana)",
+        "Tree-filtered sun (pm)": "Sol filtrado por árboles (tarde)",
+        "Sunny most of the day": "Soleado la mayor parte del día",
+        "Shady most of the day": "Sombreado la mayor parte del día",
+        "Boulders dry fast": "Los bloques se secan rápido",
+        "Boulders dry in rain": "Los bloques se escalan bajo la lluvia",
+        "Start seated": "Inicio sentado",
+        '"Highball", dangerous': '"Highball", peligroso',
+        "Slabby problem": "Problema de Slab",
+        "Very steep problem": "Problema muy desplomado",
+        "Reachy, best if tall": "Morfo, mejor si eres alto",
+        "Dynamic": "Dinámico",
+        "Pumpy or sustained": "Bombeador o sostenido",
+        "Technical": "Técnico",
+        "Powerful": "Potente",
+        "Pockets": "Pockets",
+        "Small edges, crimpy": "Regletas, crimpy",
+        "Slopey holds": "Agarres de Sloper"
+    }
+
+    translated = []
+    for style in style_list:
+        if style in style_map:
+            translated.append(style_map[style])
+        else:
+            translated.append(style)  # Keep original if no translation found
+
+    return translated
+
 async def get_place_id_from_sector(sector_id: str) -> Optional[str]:
     """Get place_id for a sector."""
     try:
@@ -195,7 +315,7 @@ async def get_place_id_from_sector(sector_id: str) -> Optional[str]:
         logger.error(f"Error getting place_id: {e}")
         return None
 
-async def process_sector_info(sector_data: Dict, place_id: str, metadata_sources: List[str]) -> ProcessedChunk:
+async def process_sector_info(sector_data: Dict, place_id: str, metadata_sources: List[str], is_boulder_sector: bool = False) -> ProcessedChunk:
     """Process sector information (name, description, approach, ethic)."""
     # Combine sector information into a structured format
     content = f"# {sector_data['name']}\n\n"
@@ -209,6 +329,10 @@ async def process_sector_info(sector_data: Dict, place_id: str, metadata_sources
     if sector_data.get('ethic'):
         content += f"## Ética\n{sector_data['ethic']}\n\n"
 
+    # For boulder sectors, add a clear indication
+    if is_boulder_sector:
+        content += f"## Tipo de Escalada\nEste es un sector de boulder.\n\n"
+
     # Get title and summary
     extracted = await get_title_and_summary(content, "sector_info", sector_data['name'])
 
@@ -220,6 +344,7 @@ async def process_sector_info(sector_data: Dict, place_id: str, metadata_sources
         "source": metadata_sources,
         "source_searchable": "|".join(metadata_sources),  # For text search optimization
         "type": "sector_info",
+        "sector_type": "boulder" if is_boulder_sector else "route",
         "chunk_size": len(content),
         "crawled_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -238,21 +363,54 @@ async def process_sector_for_rag(sector_data: Dict, routes: List[Dict], place_id
     """Process sector and routes with an optimized chunking strategy."""
     chunks = []
 
-    # 1. Sector Overview chunk
-    sector_chunk = await process_sector_info(sector_data, place_id, metadata_sources)
+    # Check if this is a boulder sector
+    is_boulder_sector = False
+    if sector_data.get('climbing_type'):
+        # Parse climbing_type if it's a string (JSON array)
+        climbing_types = sector_data['climbing_type']
+        if isinstance(climbing_types, str):
+            try:
+                climbing_types = json.loads(climbing_types)
+            except Exception as e:
+                logger.error(f"Error parsing climbing_type: {e}")
+                climbing_types = []
+
+        if climbing_types == ["boulder"]:
+            is_boulder_sector = True
+
+    # 1. Sector Overview chunk - now passing the is_boulder_sector flag
+    sector_chunk = await process_sector_info(sector_data, place_id, metadata_sources, is_boulder_sector)
     chunks.append(sector_chunk)
 
     # 2. Group routes by difficulty/grade into logical clusters
     route_groups = defaultdict(list)
 
-    # Group routes by grade prefix (e.g., "5.11", "5.12", etc.)
+    # Group routes by grade prefix
     for route in routes:
         if not route.get('grade'):
             grade_key = "unknown"
         else:
-            # Extract grade prefix (e.g., "5.11" from "5.11c")
-            match = re.match(r"(\d+\.\d+)", route.get('grade', ''))
-            grade_key = match.group(1) if match else route.get('grade', 'unknown')
+            grade = route.get('grade', '')
+
+            # Handle special boulder grades
+            if is_boulder_sector:
+                if grade == "?":
+                    grade_key = "desconocido"
+                    # Update the grade for display purposes
+                    route['grade_display'] = "Desconocido"
+                elif grade == "P.A.":
+                    grade_key = "proyecto-abierto"
+                    # Update the grade for display purposes
+                    route['grade_display'] = "Proyecto Abierto"
+                else:
+                    # For boulder grades like V0, V1, etc., use the whole grade as the key
+                    grade_key = grade
+                    route['grade_display'] = grade
+            else:
+                # For routes, extract grade prefix (e.g., "5.11" from "5.11c")
+                match = re.match(r"(\d+\.\d+)", grade)
+                grade_key = match.group(1) if match else grade
+                route['grade_display'] = grade
 
         route_groups[grade_key].append(route)
 
@@ -260,8 +418,20 @@ async def process_sector_for_rag(sector_data: Dict, routes: List[Dict], place_id
     chunk_contents = []
     for grade_key, grouped_routes in route_groups.items():
         # Add sector context
-        content = f"# Rutas de grado {grade_key} en {sector_data['name']}\n\n"
-        content += f"Información sobre rutas de dificultad {grade_key} en el sector {sector_data['name']}.\n\n"
+        if is_boulder_sector:
+            # Properly display the grade name in the title
+            if grade_key == "desconocido":
+                display_grade = "Desconocido"
+            elif grade_key == "proyecto-abierto":
+                display_grade = "Proyecto Abierto"
+            else:
+                display_grade = grade_key
+
+            content = f"# Bloques de grado {display_grade} en {sector_data['name']}\n\n"
+            content += f"Información sobre bloques de dificultad {display_grade} en el sector {sector_data['name']}.\n\n"
+        else:
+            content = f"# Rutas de grado {grade_key} en {sector_data['name']}\n\n"
+            content += f"Información sobre rutas de dificultad {grade_key} en el sector {sector_data['name']}.\n\n"
 
         # Add routes in this difficulty group
         for route in grouped_routes:
@@ -273,7 +443,10 @@ async def process_sector_for_rag(sector_data: Dict, routes: List[Dict], place_id
             if route.get('sector_id'):
                 content += f"- **Sector ID:** {route['sector_id']}\n"
 
-            if route.get('grade'):
+            # Use the display grade if available
+            if route.get('grade_display'):
+                content += f"- **Grado:** {route['grade_display']}\n"
+            elif route.get('grade'):
                 content += f"- **Grado:** {route['grade']}\n"
 
             if route.get('type'):
@@ -282,11 +455,34 @@ async def process_sector_for_rag(sector_data: Dict, routes: List[Dict], place_id
             if route.get('quality'):
                 content += f"- **Calidad:** {route['quality']}\n"
 
+            # Add boulder-specific fields
+            if is_boulder_sector:
+                if route.get('top') is not None:
+                    content += f"- **TOP:** {'Sí' if route['top'] else 'No'}\n"
+
+                if route.get('style'):
+                    try:
+                        # Parse the style JSON data
+                        style_data = route['style']
+                        if isinstance(style_data, str):
+                            style_data = json.loads(style_data)
+
+                        # Translate style options
+                        translated_styles = translate_boulder_style(style_data)
+
+                        if translated_styles:
+                            content += f"- **Características:** {', '.join(translated_styles)}\n"
+                    except Exception as e:
+                        logger.error(f"Error parsing boulder style: {e}")
+
             if route.get('length'):
                 content += f"- **Longitud:** {route['length']}\n"
 
-            if route.get('bolts'):
+            if route.get('bolts') and not is_boulder_sector:
                 content += f"- **Bolts:** {route['bolts']}\n"
+
+            if route.get('height') and is_boulder_sector:
+                content += f"- **Altura:** {route['height']}\n"
 
             if route.get('description'):
                 content += f"\n{route['description']}\n"
@@ -306,12 +502,13 @@ async def process_sector_for_rag(sector_data: Dict, routes: List[Dict], place_id
     # Get title and summary for each chunk and create ProcessedChunk objects
     processed_group_chunks = []
     for i, chunk_data in enumerate(chunk_contents):
-        extracted = await get_title_and_summary(chunk_data["content"], f"route_group_{chunk_data['grade_key']}", sector_data['name'])
+        chunk_type = "boulder_group" if is_boulder_sector else "route_group"
+        extracted = await get_title_and_summary(chunk_data["content"], f"{chunk_type}_{chunk_data['grade_key']}", sector_data['name'])
 
         metadata = {
             "source": metadata_sources,
             "source_searchable": "|".join(metadata_sources),  # For text search optimization
-            "type": "route_group",
+            "type": chunk_type,
             "grade_group": chunk_data["grade_key"],
             "sector_name": sector_data['name'],
             "route_count": chunk_data["route_count"],
@@ -348,8 +545,28 @@ async def generate_chunks_preview(sector_id: str, metadata_sources: List[str]):
         logger.error(f"No place_id found for sector: {sector_id}")
         return None, f"Error: No place_id found for sector: {sector_id}"
 
-    # Get routes for this sector
-    routes = await get_routes_for_sector(sector_id)
+    # Check if this is a boulder sector
+    is_boulder_sector = False
+    if sector_data.get('climbing_type'):
+        # Parse climbing_type if it's a string (JSON array)
+        climbing_types = sector_data['climbing_type']
+        if isinstance(climbing_types, str):
+            try:
+                climbing_types = json.loads(climbing_types)
+            except Exception as e:
+                logger.error(f"Error parsing climbing_type: {e}")
+                climbing_types = []
+
+        if climbing_types == ["boulder"]:
+            is_boulder_sector = True
+
+    # Get routes or boulders for this sector
+    if is_boulder_sector:
+        routes = await get_boulders_for_sector(sector_id)
+        logger.info(f"Retrieved {len(routes)} boulders for sector: {sector_id}")
+    else:
+        routes = await get_routes_for_sector(sector_id)
+        logger.info(f"Retrieved {len(routes)} routes for sector: {sector_id}")
 
     # Process sector for RAG using the optimized chunking strategy
     chunks = await process_sector_for_rag(sector_data, routes, place_id, metadata_sources)
@@ -387,8 +604,28 @@ async def process_sector_and_routes(sector_id: str, metadata_sources: List[str])
     # Delete existing chunks for this sector_id
     await delete_existing_chunks(sector_id, metadata_sources)
 
-    # Get routes for this sector
-    routes = await get_routes_for_sector(sector_id)
+    # Check if this is a boulder sector
+    is_boulder_sector = False
+    if sector_data.get('climbing_type'):
+        # Parse climbing_type if it's a string (JSON array)
+        climbing_types = sector_data['climbing_type']
+        if isinstance(climbing_types, str):
+            try:
+                climbing_types = json.loads(climbing_types)
+            except Exception as e:
+                logger.error(f"Error parsing climbing_type: {e}")
+                climbing_types = []
+
+        if climbing_types == ["boulder"]:
+            is_boulder_sector = True
+
+    # Get routes or boulders for this sector
+    if is_boulder_sector:
+        routes = await get_boulders_for_sector(sector_id)
+        logger.info(f"Processing sector {sector_data['name']} with {len(routes)} boulders")
+    else:
+        routes = await get_routes_for_sector(sector_id)
+        logger.info(f"Processing sector {sector_data['name']} with {len(routes)} routes")
 
     # Process sector for RAG using the optimized chunking strategy
     chunks = await process_sector_for_rag(sector_data, routes, place_id, metadata_sources)
@@ -396,7 +633,8 @@ async def process_sector_and_routes(sector_id: str, metadata_sources: List[str])
     # Insert all chunks in batch
     await insert_chunks_batch(chunks)
 
-    return f"Successfully processed sector {sector_data['name']} with {len(routes)} routes into {len(chunks)} optimized chunks"
+    entity_type = "boulders" if is_boulder_sector else "routes"
+    return f"Successfully processed sector {sector_data['name']} with {len(routes)} {entity_type} into {len(chunks)} optimized chunks"
 
 async def get_all_sectors():
     """Get list of all sectors for UI dropdown."""
@@ -595,6 +833,8 @@ def create_ui():
     return app
 
 async def main():
+    # Add a description to logging
+    logger.info("Starting RAG data update tool with boulder support")
     app = create_ui()
     app.launch(share=False, inbrowser=True)
 
