@@ -749,6 +749,10 @@ async def process_business_info(business_data: Dict, metadata_sources: List[str]
     # Combine business information into a structured format
     content = f"# {business_data['name']}\n\n"
 
+    # Add business ID if available
+    if business_data.get('id'):
+        content += f"**ID:** {business_data['id']}\n\n"
+
     # Get business type for better context
     business_type_list = []
     if business_data.get('type'):
@@ -796,15 +800,19 @@ async def process_business_info(business_data: Dict, metadata_sources: List[str]
             }
 
             for day in days:
-                if day in hours_data and hours_data[day]:
+                if day in hours_data:
                     day_schedule = hours_data[day]
-                    if isinstance(day_schedule, list) and day_schedule:
-                        slots = []
-                        for slot in day_schedule:
-                            if 'open' in slot and 'close' in slot:
-                                slots.append(f"{slot['open']} - {slot['close']}")
-                        if slots:
-                            content += f"- {day_names[day]}: {', '.join(slots)}\n"
+                    if day_schedule.get('open') is True:  # Check if the day is open
+                        if 'hours' in day_schedule and isinstance(day_schedule['hours'], list):
+                            slots = []
+                            for slot in day_schedule['hours']:
+                                if 'open' in slot and 'close' in slot:
+                                    slots.append(f"{slot['open']} - {slot['close']}")
+                            if slots:
+                                content += f"- {day_names[day]}: {', '.join(slots)}\n"
+                    elif day_schedule.get('open') is False:
+                        # Show closed status for the day
+                        content += f"- {day_names[day]}: Cerrado\n"
             content += "\n"
 
     # Add delivery and wifi information
@@ -843,24 +851,41 @@ async def process_business_info(business_data: Dict, metadata_sources: List[str]
                 logger.error(f"Error parsing menu data: {e}")
                 menu_data = {}
 
-        if menu_data and isinstance(menu_data, list):
-            content += "## Menú\n"
-            for category in menu_data:
-                if 'name' in category:
-                    content += f"### {category['name']}\n"
-                    if 'items' in category and isinstance(category['items'], list):
-                        for item in category['items']:
-                            item_info = []
-                            if 'name' in item:
-                                item_info.append(f"**{item['name']}**")
-                            if 'price' in item:
-                                item_info.append(f"${item['price']}")
-                            if 'description' in item:
-                                item_info.append(f"{item['description']}")
+        if menu_data:
+            if isinstance(menu_data, list):
+                content += "## Menú\n"
+                for category in menu_data:
+                    if 'name' in category:
+                        content += f"### {category['name']}\n"
+                        if 'items' in category and isinstance(category['items'], list):
+                            for item in category['items']:
+                                item_info = []
+                                if 'name' in item:
+                                    item_info.append(f"**{item['name']}**")
+                                if 'price' in item:
+                                    item_info.append(f"${item['price']}")
+                                if 'description' in item:
+                                    item_info.append(f"{item['description']}")
 
-                            if item_info:
-                                content += f"- {' - '.join(item_info)}\n"
-                    content += "\n"
+                                if item_info:
+                                    content += f"- {' - '.join(item_info)}\n"
+                        content += "\n"
+            elif isinstance(menu_data, dict):
+                # Handle case where menu is a single category object
+                content += "## Menú\n"
+                if 'name' in menu_data:
+                    content += f"### {menu_data['name']}\n"
+                if 'items' in menu_data and isinstance(menu_data['items'], list):
+                    for item in menu_data['items']:
+                        item_info = []
+                        if 'name' in item:
+                            item_info.append(f"**{item['name']}**")
+                        if 'price' in item:
+                            item_info.append(f"${item['price']}")
+                        if 'description' in item:
+                            item_info.append(f"{item['description']}")
+                        if item_info:
+                            content += f"- {' - '.join(item_info)}\n"
 
     # Get title and summary using enhanced prompts for businesses
     extracted = await get_title_and_summary(content, "business_info", business_data['name'])
